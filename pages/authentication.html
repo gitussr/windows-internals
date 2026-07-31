@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Windows Authentication Engine — Windows Internals Docs</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+<link rel="stylesheet" href="../assets/css/main.css">
+<style>body{font-family:'Inter','Segoe UI',sans-serif;}</style>
+</head>
+<body data-page="auth" class="antialiased">
+<div id="tooltip-pop"></div>
+
+<header class="topbar sticky top-0 z-40">
+  <div class="max-w-[1500px] mx-auto px-5 lg:px-8 h-16 flex items-center justify-between">
+    <a href="../index.html" class="flex items-center gap-2.5">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center shadow-lg shadow-blue-500/20"><i data-lucide="shield-half" class="w-4.5 h-4.5 text-white"></i></div>
+      <div class="leading-tight"><div class="text-[13px] font-bold text-white tracking-tight">Windows Internals</div><div class="text-[10px] text-slate-400 tracking-wide">MICROSOFT ENGINEERING DOCS</div></div>
+    </a>
+    <div class="hidden lg:flex items-center gap-1 text-[13px] text-slate-400">
+      <a href="../index.html" class="hover:text-white px-2">Home</a><i data-lucide="chevron-right" class="w-3.5 h-3.5"></i><span class="text-white px-2">Windows Authentication</span>
+    </div>
+    <button id="mobile-nav-toggle" class="lg:hidden w-9 h-9 rounded-lg border border-white/10 flex items-center justify-center text-slate-300"><i data-lucide="menu" class="w-4.5 h-4.5"></i></button>
+  </div>
+  <div id="mobile-nav-panel" class="hidden lg:hidden flex-col gap-1 px-5 pb-4 text-sm"></div>
+</header>
+
+<div class="max-w-[1500px] mx-auto px-5 lg:px-8 flex gap-8 pt-8 items-start">
+  <aside class="desktop-sidebar sticky top-24 w-64 flex-none h-[calc(100vh-7rem)] overflow-y-auto sidebar pr-2">
+    <div class="text-[11px] font-bold text-slate-500 tracking-wide mb-3 px-1">DOCUMENTATION</div>
+    <nav class="space-y-1 mb-6">
+      <a href="../index.html" class="side-link" data-nav="home"><i data-lucide="home" class="w-4 h-4"></i> Home</a>
+      <a href="boot-process.html" class="side-link" data-nav="boot"><span class="num">01</span> Boot Process</a>
+      <a href="authentication.html" class="side-link" data-nav="auth"><span class="num">02</span> Authentication</a>
+      <a href="kerberos.html" class="side-link" data-nav="kerberos"><span class="num">03</span> Kerberos Deep Dive</a>
+      <a href="active-directory.html" class="side-link" data-nav="ad"><span class="num">04</span> Active Directory</a>
+      <a href="tokens-authorization.html" class="side-link" data-nav="tokens"><span class="num">05</span> Tokens &amp; Authorization</a>
+      <a href="registry-profiles.html" class="side-link" data-nav="registry"><span class="num">06</span> Registry &amp; Profiles</a>
+      <a href="event-logs.html" class="side-link" data-nav="logs"><span class="num">07</span> Event Logs</a>
+      <a href="attack-techniques.html" class="side-link" data-nav="attacks"><span class="num">08</span> Attack Techniques</a>
+      <a href="soc-playbook.html" class="side-link" data-nav="soc"><span class="num">09</span> SOC Playbook</a>
+      <a href="interview-handbook.html" class="side-link" data-nav="interview"><span class="num">10</span> Interview Handbook</a>
+    </nav>
+  </aside>
+
+  <main class="flex-1 min-w-0 pb-32">
+    <div class="reveal in mb-10">
+      <div class="section-kicker">Part 2 · The Authentication Engine</div>
+      <h1 class="text-3xl lg:text-4xl font-black tracking-tight mt-2">Windows Authentication</h1>
+      <p class="prose-muted max-w-3xl mt-4 text-[15px]">Every logon — console, RDP, or network — funnels through the same engine: a Credential Provider collects material, Winlogon hands it to <span class="term" data-term="LSASS">LSASS</span>, and an Authentication Package validates it against the SAM or Active Directory before a token is minted.</p>
+    </div>
+
+    <!-- Sequence diagram -->
+    <section id="sequence" class="mb-16">
+      <h2 class="doc-h2 mb-5">The Full Authentication Sequence</h2>
+      <div class="diagram-frame reveal">
+        <div class="mermaid">
+sequenceDiagram
+  actor U as User
+  participant CP as Credential Provider
+  participant WL as winlogon.exe
+  participant LS as lsass.exe (LSA)
+  participant AP as Auth Package<br/>(msv1_0 / kerberos)
+  participant DS as SAM or Active Directory
+  participant TK as Token Creation
+  participant PR as User Profile
+  participant EX as explorer.exe
+
+  U->>CP: Enters password / PIN / biometric
+  CP->>WL: Serialized credential buffer
+  WL->>LS: LsaLogonUser()
+  LS->>AP: Dispatch to package
+  AP->>DS: Validate credential
+  DS-->>AP: Success + group membership
+  AP-->>LS: Kerberos TGT or NTLM SessionKey
+  LS->>TK: Build Access Token (SID, groups, privileges)
+  TK->>LS: Authorization context ready
+  LS-->>WL: Logon success + token handle
+  WL->>PR: userinit.exe loads profile (NTUSER.DAT)
+  PR->>EX: Launch Shell
+        </div>
+      </div>
+    </section>
+
+    <!-- Credential Providers -->
+    <section id="credential-providers" class="mb-16">
+      <h2 class="doc-h2 mb-5">Credential Providers</h2>
+      <p class="prose-muted text-sm max-w-3xl mb-5">A <span class="term" data-term="Credential Provider">Credential Provider</span> is a COM object implementing <code>ICredentialProvider</code>, registered under <code>HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers</code>. <code>logonui.exe</code> enumerates every registered provider and renders one tile per provider, per available factor.</p>
+      <div class="grid md:grid-cols-2 gap-5">
+        <div class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-2"><i data-lucide="key" class="w-4 h-4 text-blue-400"></i><h3 class="doc-h3 text-base">Password Provider</h3></div>
+          <p class="prose-muted text-sm">The default tile. Serializes the password into a <code>KERB_INTERACTIVE_LOGON</code> structure and hands it to Winlogon — the password never touches disk, only process memory in transit to LSASS.</p>
+        </div>
+        <div class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-2"><i data-lucide="scan-face" class="w-4 h-4 text-violet-400"></i><h3 class="doc-h3 text-base">Windows Hello (Biometric / PIN)</h3></div>
+          <p class="prose-muted text-sm">The PIN or biometric never leaves the device and never authenticates to AD directly — it unlocks a TPM-protected asymmetric key pair (or on-device secure enclave), and that key signs the actual authentication request. A stolen PIN is useless on another machine.</p>
+        </div>
+        <div class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-2"><i data-lucide="credit-card" class="w-4 h-4 text-cyan-400"></i><h3 class="doc-h3 text-base">Smart Card</h3></div>
+          <p class="prose-muted text-sm">Uses the certificate on the card plus a PIN to unlock the card's private key, performing certificate-based Kerberos pre-authentication (PKINIT) directly against the KDC.</p>
+        </div>
+        <div class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-2"><i data-lucide="fingerprint" class="w-4 h-4 text-emerald-400"></i><h3 class="doc-h3 text-base">Biometric (Fingerprint / Face)</h3></div>
+          <p class="prose-muted text-sm">Captured and matched locally by the Windows Biometric Framework; on a match it releases the Hello key exactly like the PIN flow above — biometric data itself is never sent anywhere.</p>
+        </div>
+      </div>
+      <div class="callout callout-info reveal mt-5">
+        <div class="co-icon"><i data-lucide="info" class="w-4 h-4"></i></div>
+        <div><div class="callout-title">CREDPROV.DLL</div><div class="callout-body">There's no single literal <code>credprov.dll</code> shipped by Microsoft for every provider — it's a generic name for the pattern: each provider (password, Hello, smart card) is its own signed COM DLL implementing the same <code>ICredentialProvider</code>/<code>ICredentialProviderCredential</code> interfaces that <code>logonui.exe</code> calls into.</div></div>
+      </div>
+    </section>
+
+    <!-- Auth Package DLLs -->
+    <section id="auth-packages" class="mb-6">
+      <h2 class="doc-h2 mb-2">Authentication Packages &amp; Security DLLs</h2>
+      <p class="prose-muted text-sm mb-6 max-w-3xl">These DLLs load inside <code>lsass.exe</code> (or are called by every process via <code>secur32.dll</code>) and together implement every credential validation path Windows supports.</p>
+    </section>
+
+    <div class="space-y-5 mb-16">
+      <article class="glass p-5 reveal" id="dll-msv1_0">
+        <h3 class="font-mono text-base font-bold text-white mb-2">msv1_0.dll <span class="chip ml-2">NTLM Authentication Package</span></h3>
+        <div class="grid md:grid-cols-2 gap-x-8 gap-y-1.5 text-[13px] prose-muted">
+          <p><b class="text-slate-300">Purpose:</b> Implements <span class="term" data-term="NTLM">NTLM</span> challenge-response and validates local logons against the SAM.</p>
+          <p><b class="text-slate-300">Functions:</b> <code>LsaApLogonUser</code>, NTLM challenge/response computation.</p>
+          <p><b class="text-slate-300">Loaded by:</b> <code>lsasrv.dll</code> inside <code>lsass.exe</code>, via the Authentication Packages list.</p>
+          <p><b class="text-slate-300">Dependencies:</b> <code>samsrv.dll</code>/<code>samlib.dll</code> for local SAM lookups, <code>netlogon.dll</code> for domain pass-through.</p>
+          <p><b class="text-slate-300">Registry:</b> <code>HKLM\SYSTEM\CurrentControlSet\Control\Lsa!Authentication Packages</code>.</p>
+          <p><b class="text-slate-300">Security implications:</b> Computes and briefly holds NTLM hashes in LSASS memory — the core of Pass-the-Hash.</p>
+        </div>
+      </article>
+
+      <article class="glass p-5 reveal" id="dll-kerberos">
+        <h3 class="font-mono text-base font-bold text-white mb-2">kerberos.dll <span class="chip ml-2">Kerberos SSP/AP</span></h3>
+        <div class="grid md:grid-cols-2 gap-x-8 gap-y-1.5 text-[13px] prose-muted">
+          <p><b class="text-slate-300">Purpose:</b> Implements Kerberos v5 (RFC 4120) — AS-REQ/REP, TGS-REQ/REP, and ticket caching.</p>
+          <p><b class="text-slate-300">Functions:</b> <code>KerbLogonUser</code>, ticket cache management (visible via <code>klist</code>).</p>
+          <p><b class="text-slate-300">Loaded by:</b> <code>lsasrv.dll</code>, via the Security Packages list.</p>
+          <p><b class="text-slate-300">Dependencies:</b> <code>cryptdll.dll</code> for crypto primitives, DNS for KDC discovery.</p>
+          <p><b class="text-slate-300">Registry:</b> <code>HKLM\SYSTEM\CurrentControlSet\Control\Lsa\Kerberos\Parameters</code>.</p>
+          <p><b class="text-slate-300">Security implications:</b> The in-memory ticket cache is the target for Pass-the-Ticket, Golden/Silver Ticket use.</p>
+        </div>
+      </article>
+
+      <article class="glass p-5 reveal" id="dll-wdigest">
+        <h3 class="font-mono text-base font-bold text-white mb-2">wdigest.dll <span class="chip ml-2">Digest Auth</span></h3>
+        <div class="grid md:grid-cols-2 gap-x-8 gap-y-1.5 text-[13px] prose-muted">
+          <p><b class="text-slate-300">Purpose:</b> Implements HTTP/SASL Digest authentication (RFC 2617).</p>
+          <p><b class="text-slate-300">Functions:</b> <code>DigestLogonUser</code>.</p>
+          <p><b class="text-slate-300">Loaded by:</b> <code>lsasrv.dll</code>.</p>
+          <p><b class="text-slate-300">Dependencies:</b> None significant.</p>
+          <p><b class="text-slate-300">Registry:</b> <code>HKLM\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest!UseLogonCredential</code>.</p>
+          <p><b class="text-slate-300">Security implications:</b> Historically cached a reversibly-encrypted, effectively-plaintext password in LSASS. Disabled by default since KB2871997 (<code>UseLogonCredential=0</code>) — but re-enabling it is a common attacker move post-compromise.</p>
+        </div>
+      </article>
+
+      <article class="glass p-5 reveal" id="dll-tspkg">
+        <h3 class="font-mono text-base font-bold text-white mb-2">tspkg.dll <span class="chip ml-2">Terminal Services Package</span></h3>
+        <div class="grid md:grid-cols-2 gap-x-8 gap-y-1.5 text-[13px] prose-muted">
+          <p><b class="text-slate-300">Purpose:</b> Supports credential caching for Terminal Services / RDP "save my credentials" and CredSSP-based flows.</p>
+          <p><b class="text-slate-300">Functions:</b> Credential storage/retrieval helpers for RDP sessions.</p>
+          <p><b class="text-slate-300">Loaded by:</b> <code>lsasrv.dll</code>.</p>
+          <p><b class="text-slate-300">Dependencies:</b> <code>credssp.dll</code>.</p>
+          <p><b class="text-slate-300">Registry:</b> Security Packages list.</p>
+          <p><b class="text-slate-300">Security implications:</b> Like WDigest, historically a Mimikatz target for recovering stored RDP credentials.</p>
+        </div>
+      </article>
+
+      <article class="glass p-5 reveal" id="dll-pku2u">
+        <h3 class="font-mono text-base font-bold text-white mb-2">pku2u.dll <span class="chip ml-2">Peer-to-Peer Auth</span></h3>
+        <div class="grid md:grid-cols-2 gap-x-8 gap-y-1.5 text-[13px] prose-muted">
+          <p><b class="text-slate-300">Purpose:</b> PKU2U — certificate-based peer-to-peer authentication without a domain or KDC (e.g. device-to-device sharing).</p>
+          <p><b class="text-slate-300">Functions:</b> Local CA-signed cert exchange and mutual authentication.</p>
+          <p><b class="text-slate-300">Loaded by:</b> <code>lsasrv.dll</code>.</p>
+          <p><b class="text-slate-300">Dependencies:</b> <code>cryptdll.dll</code>, certificate store APIs.</p>
+          <p><b class="text-slate-300">Registry:</b> <code>HKLM\SYSTEM\CurrentControlSet\Control\Lsa\pku2u!AllowOnlineID</code>.</p>
+          <p><b class="text-slate-300">Security implications:</b> Rarely used in managed enterprises; commonly disabled via policy to shrink the authentication attack surface.</p>
+        </div>
+      </article>
+
+      <article class="glass p-5 reveal" id="dll-negotiate">
+        <h3 class="font-mono text-base font-bold text-white mb-2">Negotiate.dll <span class="chip ml-2">SPNEGO</span></h3>
+        <div class="grid md:grid-cols-2 gap-x-8 gap-y-1.5 text-[13px] prose-muted">
+          <p><b class="text-slate-300">Purpose:</b> Meta-package that picks <span class="term" data-term="Negotiate">Kerberos when possible</span>, falling back to NTLM automatically.</p>
+          <p><b class="text-slate-300">Functions:</b> Package negotiation / selection logic.</p>
+          <p><b class="text-slate-300">Loaded by:</b> <code>lsasrv.dll</code>.</p>
+          <p><b class="text-slate-300">Dependencies:</b> <code>kerberos.dll</code>, <code>msv1_0.dll</code>.</p>
+          <p><b class="text-slate-300">Registry:</b> Security Packages list ("Negotiate").</p>
+          <p><b class="text-slate-300">Security implications:</b> The silent Kerberos→NTLM downgrade path — attackers can force SPN resolution to fail so a client falls back to weaker NTLM, enabling relay attacks.</p>
+        </div>
+      </article>
+
+      <article class="glass p-5 reveal" id="dll-schannel">
+        <h3 class="font-mono text-base font-bold text-white mb-2">schannel.dll <span class="chip ml-2">TLS/SSL SSP</span></h3>
+        <div class="grid md:grid-cols-2 gap-x-8 gap-y-1.5 text-[13px] prose-muted">
+          <p><b class="text-slate-300">Purpose:</b> Implements TLS/SSL/DTLS for RPC, LDAPS, and HTTPS-based Windows components.</p>
+          <p><b class="text-slate-300">Functions:</b> Certificate-based mutual auth, session key negotiation.</p>
+          <p><b class="text-slate-300">Loaded by:</b> <code>lsasrv.dll</code> and directly by network services (IIS, RDP/CredSSP).</p>
+          <p><b class="text-slate-300">Dependencies:</b> <code>bcrypt.dll</code>/<code>ncrypt.dll</code>, the certificate store.</p>
+          <p><b class="text-slate-300">Registry:</b> <code>HKLM\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL</code> (protocol/cipher policy).</p>
+          <p><b class="text-slate-300">Security implications:</b> Misconfigured protocol/cipher registry values enable downgrade attacks; certificate validation flaws here are critical severity.</p>
+        </div>
+      </article>
+
+      <article class="glass p-5 reveal" id="dll-lsasrv">
+        <h3 class="font-mono text-base font-bold text-white mb-2">lsasrv.dll <span class="chip ml-2">LSA Server Core</span></h3>
+        <div class="grid md:grid-cols-2 gap-x-8 gap-y-1.5 text-[13px] prose-muted">
+          <p><b class="text-slate-300">Purpose:</b> The core LSA server logic — orchestrates every authentication/security package, the policy database, and token creation.</p>
+          <p><b class="text-slate-300">Functions:</b> <code>LsaLogonUser</code> dispatch, <code>LsaAddAccountRights</code>, policy object management.</p>
+          <p><b class="text-slate-300">Loaded by:</b> <code>lsass.exe</code> directly at process start.</p>
+          <p><b class="text-slate-300">Dependencies:</b> Every authentication package DLL on this page.</p>
+          <p><b class="text-slate-300">Registry:</b> The entire <code>HKLM\SYSTEM\CurrentControlSet\Control\Lsa</code> tree.</p>
+          <p><b class="text-slate-300">Security implications:</b> This <i>is</i> the trust boundary — full compromise of this DLL's process means full compromise of the machine's credential material.</p>
+        </div>
+      </article>
+
+      <article class="glass p-5 reveal" id="dll-samlib">
+        <h3 class="font-mono text-base font-bold text-white mb-2">samlib.dll / samcli.dll <span class="chip ml-2">SAM Client</span></h3>
+        <div class="grid md:grid-cols-2 gap-x-8 gap-y-1.5 text-[13px] prose-muted">
+          <p><b class="text-slate-300">Purpose:</b> Client-side RPC access to the <span class="term" data-term="SAM">SAM</span> database, local or remote.</p>
+          <p><b class="text-slate-300">Functions:</b> <code>SamConnect</code>, <code>SamOpenUser</code>, group/user enumeration.</p>
+          <p><b class="text-slate-300">Loaded by:</b> <code>lsass.exe</code>, admin snap-ins (Local Users &amp; Groups), auditing tools.</p>
+          <p><b class="text-slate-300">Dependencies:</b> <code>rpcrt4.dll</code> for RPC transport.</p>
+          <p><b class="text-slate-300">Registry:</b> The <code>HKLM\SAM</code> hive itself — access-restricted even to local Administrators by default ACL.</p>
+          <p><b class="text-slate-300">Security implications:</b> Target of local hash extraction via <code>reg save HKLM\SAM</code> + offline parsing.</p>
+        </div>
+      </article>
+
+      <article class="glass p-5 reveal" id="dll-cryptdll">
+        <h3 class="font-mono text-base font-bold text-white mb-2">cryptdll.dll <span class="chip ml-2">Crypto Primitives</span></h3>
+        <div class="grid md:grid-cols-2 gap-x-8 gap-y-1.5 text-[13px] prose-muted">
+          <p><b class="text-slate-300">Purpose:</b> Core cryptographic primitives for Kerberos/NTLM — DES/RC4/HMAC and NT-hash key derivation.</p>
+          <p><b class="text-slate-300">Functions:</b> <code>CDLocateCSystem</code>, hash/HMAC helper routines.</p>
+          <p><b class="text-slate-300">Loaded by:</b> <code>kerberos.dll</code>, <code>msv1_0.dll</code>.</p>
+          <p><b class="text-slate-300">Dependencies:</b> <code>bcrypt.dll</code> (modern CNG backend).</p>
+          <p><b class="text-slate-300">Registry:</b> FIPS algorithm policy keys can restrict which primitives are permitted.</p>
+          <p><b class="text-slate-300">Security implications:</b> Implements NTOWFv1/v2 (NT hash derivation) — foundational to why Pass-the-Hash works at all.</p>
+        </div>
+      </article>
+
+      <article class="glass p-5 reveal" id="dll-advapi32">
+        <h3 class="font-mono text-base font-bold text-white mb-2">advapi32.dll <span class="chip ml-2">Base Security API</span></h3>
+        <div class="grid md:grid-cols-2 gap-x-8 gap-y-1.5 text-[13px] prose-muted">
+          <p><b class="text-slate-300">Purpose:</b> Exposes registry, service control, event log, and security APIs to every user-mode process.</p>
+          <p><b class="text-slate-300">Functions:</b> <code>LogonUserW</code>, <code>OpenProcessToken</code>, <code>AccessCheck</code>, <code>RegOpenKeyEx</code>.</p>
+          <p><b class="text-slate-300">Loaded by:</b> Nearly every process on the system.</p>
+          <p><b class="text-slate-300">Dependencies:</b> <code>sechost.dll</code>, <code>rpcrt4.dll</code>.</p>
+          <p><b class="text-slate-300">Registry:</b> n/a — it's a general API surface, not a policy owner.</p>
+          <p><b class="text-slate-300">Security implications:</b> The primary API surface attackers call for credential validation testing, token manipulation, and service creation.</p>
+        </div>
+      </article>
+
+      <article class="glass p-5 reveal" id="dll-secur32">
+        <h3 class="font-mono text-base font-bold text-white mb-2">secur32.dll <span class="chip ml-2">SSPI Dispatcher</span></h3>
+        <div class="grid md:grid-cols-2 gap-x-8 gap-y-1.5 text-[13px] prose-muted">
+          <p><b class="text-slate-300">Purpose:</b> Public SSPI surface — <code>AcquireCredentialsHandle</code>, <code>InitializeSecurityContext</code>, <code>AcceptSecurityContext</code> — routing to whichever package is selected.</p>
+          <p><b class="text-slate-300">Functions:</b> SSPI dispatch to NTLM/Kerberos/Negotiate/Schannel backends.</p>
+          <p><b class="text-slate-300">Loaded by:</b> Any process doing network auth — browsers, RDP clients, SQL clients.</p>
+          <p><b class="text-slate-300">Dependencies:</b> RPCs into <code>lsasrv.dll</code> inside <code>lsass.exe</code> for the real logic.</p>
+          <p><b class="text-slate-300">Registry:</b> <code>HKLM\SYSTEM\CurrentControlSet\Control\SecurityProviders</code> (package list).</p>
+          <p><b class="text-slate-300">Security implications:</b> The client-facing seam where NTLM relay and protocol downgrade attacks are launched from.</p>
+        </div>
+      </article>
+
+      <article class="glass p-5 reveal" id="dll-netlogon">
+        <h3 class="font-mono text-base font-bold text-white mb-2">netlogon.dll <span class="chip ml-2">Netlogon / Zerologon Surface</span></h3>
+        <div class="grid md:grid-cols-2 gap-x-8 gap-y-1.5 text-[13px] prose-muted">
+          <p><b class="text-slate-300">Purpose:</b> Implements the Netlogon secure channel between a member computer and a DC, NTLM pass-through, and DC discovery.</p>
+          <p><b class="text-slate-300">Functions:</b> <code>NetrServerReqChallenge</code>, <code>NetrServerAuthenticate</code>.</p>
+          <p><b class="text-slate-300">Loaded by:</b> Hosted inside <code>lsass.exe</code> as the Netlogon service, given its security sensitivity.</p>
+          <p><b class="text-slate-300">Dependencies:</b> <code>msv1_0.dll</code> for pass-through NTLM, DNS client for DC lookup.</p>
+          <p><b class="text-slate-300">Registry:</b> <code>HKLM\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters!FullSecureChannelProtection</code>.</p>
+          <p><b class="text-slate-300">Security implications:</b> CVE-2020-1472 "Zerologon" exploited a crypto flaw here to reset a DC's machine account password and seize domain admin.</p>
+        </div>
+      </article>
+
+      <article class="glass p-5 reveal" id="dll-userenv">
+        <h3 class="font-mono text-base font-bold text-white mb-2">userenv.dll <span class="chip ml-2">User Environment</span></h3>
+        <div class="grid md:grid-cols-2 gap-x-8 gap-y-1.5 text-[13px] prose-muted">
+          <p><b class="text-slate-300">Purpose:</b> Applies Group Policy and loads/unloads the user's registry profile (<span class="term" data-term="NTUSER.DAT">NTUSER.DAT</span>).</p>
+          <p><b class="text-slate-300">Functions:</b> <code>LoadUserProfile</code>, <code>CreateEnvironmentBlock</code>, <code>ProcessGroupPolicy</code>.</p>
+          <p><b class="text-slate-300">Loaded by:</b> <code>winlogon.exe</code>/<code>userinit.exe</code>, and the Group Policy Client service.</p>
+          <p><b class="text-slate-300">Dependencies:</b> <code>profapi.dll</code>.</p>
+          <p><b class="text-slate-300">Registry:</b> Mounts <code>HKCU</code>; reads policy under <code>Software\Policies</code>.</p>
+          <p><b class="text-slate-300">Security implications:</b> Group Policy tampering here is a domain-wide persistence and privilege-escalation vector.</p>
+        </div>
+      </article>
+
+      <article class="glass p-5 reveal" id="dll-profapi">
+        <h3 class="font-mono text-base font-bold text-white mb-2">profapi.dll <span class="chip ml-2">Profile API</span></h3>
+        <div class="grid md:grid-cols-2 gap-x-8 gap-y-1.5 text-[13px] prose-muted">
+          <p><b class="text-slate-300">Purpose:</b> Lower-level profile mount/unmount routines used by <code>userenv.dll</code>.</p>
+          <p><b class="text-slate-300">Functions:</b> Underlying <code>LoadUserProfileW</code>/<code>UnloadUserProfile</code> implementations.</p>
+          <p><b class="text-slate-300">Loaded by:</b> <code>userenv.dll</code>, <code>winlogon.exe</code>.</p>
+          <p><b class="text-slate-300">Dependencies:</b> Native hive-loading calls in <code>ntdll.dll</code>.</p>
+          <p><b class="text-slate-300">Registry:</b> <code>HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList</code> (per-SID <code>ProfileImagePath</code>).</p>
+          <p><b class="text-slate-300">Security implications:</b> ProfileList tampering can redirect a profile path or leave orphaned, readable hives behind.</p>
+        </div>
+      </article>
+
+      <article class="glass p-5 reveal" id="dll-profsvc">
+        <h3 class="font-mono text-base font-bold text-white mb-2">profsvc <span class="chip ml-2">User Profile Service</span></h3>
+        <div class="grid md:grid-cols-2 gap-x-8 gap-y-1.5 text-[13px] prose-muted">
+          <p><b class="text-slate-300">Purpose:</b> Service-side coordination of profile load/unload lifecycle tied to logon/logoff events.</p>
+          <p><b class="text-slate-300">Functions:</b> Signals <code>userenv.dll</code>/<code>profapi.dll</code> at the right lifecycle points.</p>
+          <p><b class="text-slate-300">Loaded by:</b> <code>services.exe</code> starts it as an auto-start service, hosted in a shared <code>svchost.exe</code>.</p>
+          <p><b class="text-slate-300">Dependencies:</b> <code>profapi.dll</code>, <code>userenv.dll</code>.</p>
+          <p><b class="text-slate-300">Registry:</b> <code>HKLM\SYSTEM\CurrentControlSet\Services\ProfSvc</code>.</p>
+          <p><b class="text-slate-300">Security implications:</b> Failures here cause temporary profile logons — a useful timing signal, not a common direct attack surface.</p>
+        </div>
+      </article>
+    </div>
+
+    <div class="callout callout-fun reveal">
+      <div class="co-icon"><i data-lucide="sparkles" class="w-4 h-4"></i></div>
+      <div><div class="callout-title">DID YOU KNOW?</div><div class="callout-body">Windows Hello's "PIN is more secure than a password" claim isn't about PIN complexity — a 4-digit PIN is trivially guessable. It's secure because it never leaves the device and is useless without the TPM-bound key it unlocks.</div></div>
+    </div>
+
+  </main>
+
+  <aside class="hidden xl:block w-56 flex-none sticky top-24 h-[calc(100vh-7rem)] overflow-y-auto">
+    <div class="text-[11px] font-bold text-slate-500 tracking-wide mb-3">ON THIS PAGE</div>
+    <nav class="space-y-0.5">
+      <a href="#sequence" class="toc-link">Auth Sequence</a>
+      <a href="#credential-providers" class="toc-link">Credential Providers</a>
+      <a href="#auth-packages" class="toc-link">Auth Packages &amp; DLLs</a>
+    </nav>
+    <div class="mt-8 glass p-4">
+      <div class="text-xs font-bold text-slate-300 mb-2 flex items-center gap-1.5"><i data-lucide="arrow-right-circle" class="w-3.5 h-3.5 text-blue-400"></i> Next up</div>
+      <a href="kerberos.html" class="text-sm text-cyan-300 hover:underline">Kerberos Deep Dive →</a>
+    </div>
+  </aside>
+</div>
+
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/main.js"></script>
+</body>
+</html>

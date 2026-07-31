@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Kerberos Deep Dive — Windows Internals Docs</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+<link rel="stylesheet" href="../assets/css/main.css">
+<style>body{font-family:'Inter','Segoe UI',sans-serif;}</style>
+</head>
+<body data-page="kerberos" class="antialiased">
+<div id="tooltip-pop"></div>
+
+<header class="topbar sticky top-0 z-40">
+  <div class="max-w-[1500px] mx-auto px-5 lg:px-8 h-16 flex items-center justify-between">
+    <a href="../index.html" class="flex items-center gap-2.5">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center shadow-lg shadow-blue-500/20"><i data-lucide="shield-half" class="w-4.5 h-4.5 text-white"></i></div>
+      <div class="leading-tight"><div class="text-[13px] font-bold text-white tracking-tight">Windows Internals</div><div class="text-[10px] text-slate-400 tracking-wide">MICROSOFT ENGINEERING DOCS</div></div>
+    </a>
+    <div class="hidden lg:flex items-center gap-1 text-[13px] text-slate-400">
+      <a href="../index.html" class="hover:text-white px-2">Home</a><i data-lucide="chevron-right" class="w-3.5 h-3.5"></i><span class="text-white px-2">Kerberos Deep Dive</span>
+    </div>
+    <button id="mobile-nav-toggle" class="lg:hidden w-9 h-9 rounded-lg border border-white/10 flex items-center justify-center text-slate-300"><i data-lucide="menu" class="w-4.5 h-4.5"></i></button>
+  </div>
+  <div id="mobile-nav-panel" class="hidden lg:hidden flex-col gap-1 px-5 pb-4 text-sm"></div>
+</header>
+
+<div class="max-w-[1500px] mx-auto px-5 lg:px-8 flex gap-8 pt-8 items-start">
+  <aside class="desktop-sidebar sticky top-24 w-64 flex-none h-[calc(100vh-7rem)] overflow-y-auto sidebar pr-2">
+    <div class="text-[11px] font-bold text-slate-500 tracking-wide mb-3 px-1">DOCUMENTATION</div>
+    <nav class="space-y-1 mb-6">
+      <a href="../index.html" class="side-link" data-nav="home"><i data-lucide="home" class="w-4 h-4"></i> Home</a>
+      <a href="boot-process.html" class="side-link" data-nav="boot"><span class="num">01</span> Boot Process</a>
+      <a href="authentication.html" class="side-link" data-nav="auth"><span class="num">02</span> Authentication</a>
+      <a href="kerberos.html" class="side-link" data-nav="kerberos"><span class="num">03</span> Kerberos Deep Dive</a>
+      <a href="active-directory.html" class="side-link" data-nav="ad"><span class="num">04</span> Active Directory</a>
+      <a href="tokens-authorization.html" class="side-link" data-nav="tokens"><span class="num">05</span> Tokens &amp; Authorization</a>
+      <a href="registry-profiles.html" class="side-link" data-nav="registry"><span class="num">06</span> Registry &amp; Profiles</a>
+      <a href="event-logs.html" class="side-link" data-nav="logs"><span class="num">07</span> Event Logs</a>
+      <a href="attack-techniques.html" class="side-link" data-nav="attacks"><span class="num">08</span> Attack Techniques</a>
+      <a href="soc-playbook.html" class="side-link" data-nav="soc"><span class="num">09</span> SOC Playbook</a>
+      <a href="interview-handbook.html" class="side-link" data-nav="interview"><span class="num">10</span> Interview Handbook</a>
+    </nav>
+  </aside>
+
+  <main class="flex-1 min-w-0 pb-32">
+    <div class="reveal in mb-10">
+      <div class="section-kicker">Part 3 · Kerberos Protocol</div>
+      <h1 class="text-3xl lg:text-4xl font-black tracking-tight mt-2">Kerberos Deep Dive</h1>
+      <p class="prose-muted max-w-3xl mt-4 text-[15px]">Kerberos trades "prove your password every time" for "prove it once, then present time-limited tickets." That single design choice is why almost every high-impact AD attack technique revolves around stealing or forging tickets instead of cracking passwords.</p>
+    </div>
+
+    <section id="as-tgs" class="mb-16">
+      <h2 class="doc-h2 mb-5">AS Exchange → TGS Exchange → Service Access</h2>
+      <div class="diagram-frame reveal">
+        <div class="mermaid">
+sequenceDiagram
+  participant C as Client
+  participant KDC as KDC (Domain Controller)
+  participant APP as Application Server
+
+  C->>KDC: AS-REQ (username, timestamp encrypted with NT hash)
+  KDC-->>C: AS-REP → TGT + Session Key<br/>(TGT encrypted with krbtgt hash)
+  Note over C: TGT cached, valid ~10 hours
+
+  C->>KDC: TGS-REQ (TGT + SPN of target service)
+  KDC-->>C: TGS-REP → Service Ticket<br/>(encrypted with service account hash, contains PAC)
+
+  C->>APP: AP-REQ (Service Ticket)
+  APP->>APP: Decrypts ticket with its own hash, validates PAC
+  APP-->>C: AP-REP → access granted
+        </div>
+      </div>
+      <div class="grid md:grid-cols-2 gap-5 mt-6">
+        <div class="glass p-5 reveal">
+          <h3 class="doc-h3 text-base mb-1">Step 1 — <span class="term" data-term="AS">AS Request</span></h3>
+          <p class="prose-muted text-sm">The client proves knowledge of its password by encrypting a timestamp with its NT hash. If the <span class="term" data-term="KDC">KDC</span> can decrypt it, it issues a <span class="term" data-term="TGT">TGT</span> encrypted with the domain's <code>krbtgt</code> account hash — a secret only the KDC knows.</p>
+        </div>
+        <div class="glass p-5 reveal">
+          <h3 class="doc-h3 text-base mb-1">Step 2 — <span class="term" data-term="TGS">TGS Request</span></h3>
+          <p class="prose-muted text-sm">The client presents the TGT plus a target <span class="term" data-term="SPN">SPN</span>. The KDC decrypts the TGT (proving it's genuine), builds a Service Ticket encrypted with <i>that service account's</i> hash, and embeds the client's <span class="term" data-term="PAC">PAC</span> inside it.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="pac-spn" class="mb-16">
+      <h2 class="doc-h2 mb-5">PAC &amp; SPN</h2>
+      <div class="grid md:grid-cols-2 gap-5">
+        <div class="glass p-5 reveal">
+          <h3 class="doc-h3 text-base mb-2">Privilege Attribute Certificate (PAC)</h3>
+          <p class="prose-muted text-sm">A Microsoft extension to Kerberos embedded in the service ticket, carrying the user's SID, all group SIDs, and privileges — this is what lets the target server authorize the user <i>without querying AD itself</i>. It's signed by both the KDC and the target service key so tampering is detectable.</p>
+        </div>
+        <div class="glass p-5 reveal">
+          <h3 class="doc-h3 text-base mb-2">Service Principal Name (SPN)</h3>
+          <p class="prose-muted text-sm">A unique string like <code>MSSQLSvc/db01.corp.local:1433</code> mapping a network service instance to the account that runs it. Kerberos can only issue a ticket for a service if its SPN is registered — no SPN means no Kerberos, forcing a fallback to NTLM (or failure).</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="attacks" class="mb-16">
+      <h2 class="doc-h2 mb-2">Kerberos &amp; NTLM Attack Techniques</h2>
+      <p class="prose-muted text-sm mb-6 max-w-3xl">These are the techniques every credential-theft discussion eventually lands on — understand the mechanism, not just the tool name.</p>
+
+      <div class="space-y-5">
+        <article class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-2"><span class="badge badge-red">CRITICAL</span><h3 class="doc-h3 text-base">Golden Ticket</h3></div>
+          <p class="prose-muted text-sm">Forge a TGT from scratch using the stolen <code>krbtgt</code> account hash. Since the KDC trusts anything encrypted with that hash, the attacker can mint a TGT for any user (including ones that don't exist), with any group memberships, valid for up to 10 years by default. This bypasses AD entirely — it doesn't even need a real account.</p>
+          <div class="callout callout-blue mt-3"><div class="co-icon"><i data-lucide="search" class="w-4 h-4"></i></div><div><div class="callout-title">MITIGATION</div><div class="callout-body">Rotate the <code>krbtgt</code> password twice (its history matters) after any suspected DC compromise; monitor Event ID 4768 for anomalous TGT requests and abnormal ticket lifetimes.</div></div></div>
+        </article>
+        <article class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-2"><span class="badge badge-red">HIGH</span><h3 class="doc-h3 text-base">Silver Ticket</h3></div>
+          <p class="prose-muted text-sm">Forge a Service Ticket using a stolen <i>service</i> account (or computer account) hash — no KDC contact required at all, since the target server validates the ticket itself. Scope is limited to that one service, but it's also far quieter (no Event ID 4769 at the DC).</p>
+          <div class="callout callout-blue mt-3"><div class="co-icon"><i data-lucide="search" class="w-4 h-4"></i></div><div><div class="callout-title">MITIGATION</div><div class="callout-body">Enforce PAC validation on the target server; rotate service account passwords regularly; use group Managed Service Accounts (gMSA) with automatic rotation.</div></div></div>
+        </article>
+        <article class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-2"><span class="badge badge-amber">MEDIUM-HIGH</span><h3 class="doc-h3 text-base"><span class="term" data-term="Kerberoasting">Kerberoasting</span></h3></div>
+          <p class="prose-muted text-sm">Any authenticated user can request a Service Ticket for any SPN. If that SPN belongs to a user account (not a computer account) with a weak password, the ticket — encrypted with that account's derived key — can be cracked offline at leisure.</p>
+          <div class="callout callout-blue mt-3"><div class="co-icon"><i data-lucide="search" class="w-4 h-4"></i></div><div><div class="callout-title">MITIGATION</div><div class="callout-body">Use gMSAs (25+ character random passwords, auto-rotated) for service accounts; monitor Event ID 4769 for a burst of ticket requests with RC4 encryption (<code>0x17</code>) from one account.</div></div></div>
+        </article>
+        <article class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-2"><span class="badge badge-amber">MEDIUM</span><h3 class="doc-h3 text-base"><span class="term" data-term="Pass the Ticket">Pass the Ticket</span></h3></div>
+          <p class="prose-muted text-sm">Export a legitimately-issued TGT or service ticket from one session's memory and inject it into another session/machine, impersonating the ticket's owner without needing any password or hash.</p>
+        </article>
+        <article class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-2"><span class="badge badge-amber">MEDIUM</span><h3 class="doc-h3 text-base"><span class="term" data-term="Pass the Hash">Pass the Hash</span></h3></div>
+          <p class="prose-muted text-sm">NTLM authentication only ever needs the NT hash, not the plaintext password. An attacker who dumps a hash from LSASS or the SAM can authenticate as that user anywhere NTLM is accepted, forever, until the password changes.</p>
+        </article>
+        <article class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-2"><span class="badge badge-amber">MEDIUM</span><h3 class="doc-h3 text-base"><span class="term" data-term="NTLM Relay">NTLM Relay</span></h3></div>
+          <p class="prose-muted text-sm">Instead of cracking or reusing a hash, the attacker sits in the middle and relays a live NTLM handshake to a different server in real time — authenticating as the victim on a target they never intended to connect to.</p>
+          <div class="callout callout-blue mt-3"><div class="co-icon"><i data-lucide="search" class="w-4 h-4"></i></div><div><div class="callout-title">MITIGATION</div><div class="callout-body">Enable SMB signing and Extended Protection for Authentication (EPA); disable NTLM where feasible; enforce LDAP/LDAPS signing and channel binding.</div></div></div>
+        </article>
+      </div>
+    </section>
+
+    <section id="defenses" class="mb-16">
+      <h2 class="doc-h2 mb-5">Modern Defenses</h2>
+      <div class="grid md:grid-cols-2 gap-5">
+        <div class="glass p-5 reveal">
+          <h3 class="doc-h3 text-base mb-1"><span class="term" data-term="Credential Guard">Credential Guard</span></h3>
+          <p class="prose-muted text-sm">Uses Virtualization-Based Security (a hypervisor-isolated VTL1 enclave) to run <code>LsaIso.exe</code>, holding NTLM hashes and Kerberos TGT keys where not even a kernel-mode exploit in the normal OS can reach them. LSASS in the normal OS only holds derived, single-use material.</p>
+        </div>
+        <div class="glass p-5 reveal">
+          <h3 class="doc-h3 text-base mb-1"><span class="term" data-term="LSA Protection">LSA Protection (RunAsPPL)</span></h3>
+          <p class="prose-muted text-sm">Marks <code>lsass.exe</code> as a Protected Process (Light) at the ELAM/signing level, so only other signed, protected processes can open handles to it — blocking the classic <code>OpenProcess</code> + dump approach used by tools like Mimikatz (though kernel-level attacks and driver abuse can still bypass it).</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="cached-offline" class="mb-16">
+      <h2 class="doc-h2 mb-5">Cached Credentials &amp; Offline Login</h2>
+      <div class="glass-strong p-6 reveal">
+        <p class="prose-muted text-sm mb-4">Laptops need to log in without a network path to a Domain Controller. Windows solves this with <b>cached domain credential verifiers</b> — not the password, not even the NT hash, but a salted, iterated hash of the last successful domain logon (<code>MSCacheV2</code>), stored per user.</p>
+        <div class="overflow-x-auto">
+          <table class="reg-table">
+            <thead><tr><th>Registry Location</th><th>Purpose</th></tr></thead>
+            <tbody>
+              <tr><td><code>HKLM\SECURITY\Cache</code></td><td>Stores the cached domain verifiers (<code>NL$1</code>…<code>NL$10</code> by default).</td></tr>
+              <tr><td><code>HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon!CachedLogonsCount</code></td><td>How many prior domain logons are cached (0 disables offline logon entirely).</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-danger mt-5">
+          <div class="co-icon"><i data-lucide="alert-triangle" class="w-4 h-4"></i></div>
+          <div><div class="callout-title">SECURITY NOTE</div><div class="callout-body">Cached verifiers are intentionally <i>not</i> directly usable for Pass-the-Hash or network authentication — they can only be brute-forced offline, which is why they're a lower-value (but not zero-value) target than a live NT hash.</div></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="callout callout-fun reveal">
+      <div class="co-icon"><i data-lucide="sparkles" class="w-4 h-4"></i></div>
+      <div><div class="callout-title">DID YOU KNOW?</div><div class="callout-body">A default-configuration TGT is valid for 10 hours and renewable for 7 days — meaning a stolen ticket doesn't even need to be used immediately to still be dangerous a week later.</div></div>
+    </div>
+
+  </main>
+
+  <aside class="hidden xl:block w-56 flex-none sticky top-24 h-[calc(100vh-7rem)] overflow-y-auto">
+    <div class="text-[11px] font-bold text-slate-500 tracking-wide mb-3">ON THIS PAGE</div>
+    <nav class="space-y-0.5">
+      <a href="#as-tgs" class="toc-link">AS → TGS → Service</a>
+      <a href="#pac-spn" class="toc-link">PAC &amp; SPN</a>
+      <a href="#attacks" class="toc-link">Attack Techniques</a>
+      <a href="#defenses" class="toc-link">Modern Defenses</a>
+      <a href="#cached-offline" class="toc-link">Cached &amp; Offline Login</a>
+    </nav>
+    <div class="mt-8 glass p-4">
+      <div class="text-xs font-bold text-slate-300 mb-2 flex items-center gap-1.5"><i data-lucide="arrow-right-circle" class="w-3.5 h-3.5 text-blue-400"></i> Next up</div>
+      <a href="active-directory.html" class="text-sm text-cyan-300 hover:underline">Active Directory →</a>
+    </div>
+  </aside>
+</div>
+
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/main.js"></script>
+</body>
+</html>

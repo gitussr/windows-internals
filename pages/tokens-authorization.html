@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tokens & Authorization — Windows Internals Docs</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+<link rel="stylesheet" href="../assets/css/main.css">
+<style>body{font-family:'Inter','Segoe UI',sans-serif;}</style>
+</head>
+<body data-page="tokens" class="antialiased">
+<div id="tooltip-pop"></div>
+
+<header class="topbar sticky top-0 z-40">
+  <div class="max-w-[1500px] mx-auto px-5 lg:px-8 h-16 flex items-center justify-between">
+    <a href="../index.html" class="flex items-center gap-2.5">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center shadow-lg shadow-blue-500/20"><i data-lucide="shield-half" class="w-4.5 h-4.5 text-white"></i></div>
+      <div class="leading-tight"><div class="text-[13px] font-bold text-white tracking-tight">Windows Internals</div><div class="text-[10px] text-slate-400 tracking-wide">MICROSOFT ENGINEERING DOCS</div></div>
+    </a>
+    <div class="hidden lg:flex items-center gap-1 text-[13px] text-slate-400">
+      <a href="../index.html" class="hover:text-white px-2">Home</a><i data-lucide="chevron-right" class="w-3.5 h-3.5"></i><span class="text-white px-2">Tokens &amp; Authorization</span>
+    </div>
+    <button id="mobile-nav-toggle" class="lg:hidden w-9 h-9 rounded-lg border border-white/10 flex items-center justify-center text-slate-300"><i data-lucide="menu" class="w-4.5 h-4.5"></i></button>
+  </div>
+  <div id="mobile-nav-panel" class="hidden lg:hidden flex-col gap-1 px-5 pb-4 text-sm"></div>
+</header>
+
+<div class="max-w-[1500px] mx-auto px-5 lg:px-8 flex gap-8 pt-8 items-start">
+  <aside class="desktop-sidebar sticky top-24 w-64 flex-none h-[calc(100vh-7rem)] overflow-y-auto sidebar pr-2">
+    <div class="text-[11px] font-bold text-slate-500 tracking-wide mb-3 px-1">DOCUMENTATION</div>
+    <nav class="space-y-1 mb-6">
+      <a href="../index.html" class="side-link" data-nav="home"><i data-lucide="home" class="w-4 h-4"></i> Home</a>
+      <a href="boot-process.html" class="side-link" data-nav="boot"><span class="num">01</span> Boot Process</a>
+      <a href="authentication.html" class="side-link" data-nav="auth"><span class="num">02</span> Authentication</a>
+      <a href="kerberos.html" class="side-link" data-nav="kerberos"><span class="num">03</span> Kerberos Deep Dive</a>
+      <a href="active-directory.html" class="side-link" data-nav="ad"><span class="num">04</span> Active Directory</a>
+      <a href="tokens-authorization.html" class="side-link" data-nav="tokens"><span class="num">05</span> Tokens &amp; Authorization</a>
+      <a href="registry-profiles.html" class="side-link" data-nav="registry"><span class="num">06</span> Registry &amp; Profiles</a>
+      <a href="event-logs.html" class="side-link" data-nav="logs"><span class="num">07</span> Event Logs</a>
+      <a href="attack-techniques.html" class="side-link" data-nav="attacks"><span class="num">08</span> Attack Techniques</a>
+      <a href="soc-playbook.html" class="side-link" data-nav="soc"><span class="num">09</span> SOC Playbook</a>
+      <a href="interview-handbook.html" class="side-link" data-nav="interview"><span class="num">10</span> Interview Handbook</a>
+    </nav>
+  </aside>
+
+  <main class="flex-1 min-w-0 pb-32">
+    <div class="reveal in mb-10">
+      <div class="section-kicker">Part 4 · Authorization &amp; User Session</div>
+      <h1 class="text-3xl lg:text-4xl font-black tracking-tight mt-2">Access Tokens &amp; Authorization</h1>
+      <p class="prose-muted max-w-3xl mt-4 text-[15px]">Authentication answers "who are you?" exactly once, at logon. Everything after that — every file open, every registry write, every process launch — is answered by the <span class="term" data-term="Access Token">Access Token</span> LSASS built at that moment, checked by the <span class="term" data-term="SRM">Security Reference Monitor</span> every single time.</p>
+    </div>
+
+    <section id="token-anatomy" class="mb-16">
+      <h2 class="doc-h2 mb-5">Anatomy of an Access Token</h2>
+      <div class="grid md:grid-cols-2 gap-5">
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">User <span class="term" data-term="SID">SID</span></h3><p class="prose-muted text-sm">A unique, never-reused identifier for the account (e.g. <code>S-1-5-21-...-1001</code>). The final component is the <span class="term" data-term="RID">RID</span> — <code>500</code> is always the built-in Administrator, <code>501</code> Guest.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">Group SIDs</h3><p class="prose-muted text-sm">Every group the user belongs to, direct and nested — this list is what most <span class="term" data-term="DACL">DACL</span> checks actually match against.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">Privileges</h3><p class="prose-muted text-sm">Named rights like <code>SeDebugPrivilege</code> or <code>SeImpersonatePrivilege</code> that bypass normal object-level checks entirely — these are frequently the real privilege-escalation lever, not the SID list.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">Integrity Level</h3><p class="prose-muted text-sm">Low / Medium / High / System, enforced by <span class="term" data-term="MIC">Mandatory Integrity Control</span> — independent of and stricter than the DACL: a lower-integrity process cannot write to a higher-integrity object no matter what the DACL says.</p></div>
+      </div>
+      <div class="callout callout-info reveal mt-5">
+        <div class="co-icon"><i data-lucide="info" class="w-4 h-4"></i></div>
+        <div><div class="callout-title"><span class="term" data-term="Primary Token">Primary</span> vs <span class="term" data-term="Impersonation Token">Impersonation</span> Tokens</div><div class="callout-body">A <b>primary token</b> is attached to a process at creation and defines its default security context. An <b>impersonation token</b> is adopted temporarily by a single thread — e.g. a file server thread "becomes" the connecting client just long enough to check that client's file permissions, then reverts.</div></div>
+      </div>
+    </section>
+
+    <section id="token-creation" class="mb-16">
+      <h2 class="doc-h2 mb-5">Token Creation &amp; Authorization Checks</h2>
+      <div class="diagram-frame reveal mb-6">
+        <div class="mermaid">
+graph LR
+  A[LSA validates credential] --> B[Build token:<br/>SID + Groups + Privileges + Integrity]
+  B --> C[Token attached to<br/>new process as Primary Token]
+  C --> D{Process requests<br/>object access}
+  D --> E["SRM: compare token<br/>vs Security Descriptor DACL"]
+  D --> F["MIC: compare token<br/>Integrity Level vs object"]
+  E --> G{Access granted?}
+  F --> G
+  G -->|Yes| H[Handle returned]
+  G -->|No| I[STATUS_ACCESS_DENIED]
+        </div>
+      </div>
+      <div class="grid md:grid-cols-2 gap-5">
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1"><span class="term" data-term="Object Manager">Object Manager</span></h3><p class="prose-muted text-sm">The Executive component managing the entire kernel object namespace — files, processes, sections, mutexes — as a unified tree, so every object type gets security enforcement for free.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1"><span class="term" data-term="SRM">Security Reference Monitor</span></h3><p class="prose-muted text-sm">The kernel-mode gatekeeper, inside <code>ntoskrnl.exe</code>, that performs the actual access check comparing a token to a <span class="term" data-term="SID">Security Descriptor</span> — nothing in user mode can bypass it.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">Security Descriptor</h3><p class="prose-muted text-sm">The structure attached to every securable object: owner SID, group SID, a <span class="term" data-term="DACL">DACL</span>, and a <span class="term" data-term="SACL">SACL</span>.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1"><span class="term" data-term="UAC">UAC</span></h3><p class="prose-muted text-sm">When an administrator logs on, LSA actually builds <i>two</i> tokens — a filtered standard-user token used by default, and a full admin token used only after an explicit elevation prompt. This is why "Run as Administrator" exists as a distinct action.</p></div>
+      </div>
+    </section>
+
+    <section id="acls" class="mb-16">
+      <h2 class="doc-h2 mb-5">DACL, SACL &amp; NTFS Permissions</h2>
+      <div class="overflow-x-auto glass p-1 reveal">
+        <table class="reg-table">
+          <thead><tr><th>Concept</th><th>What it controls</th></tr></thead>
+          <tbody>
+            <tr><td><span class="term" data-term="DACL">DACL</span></td><td>Which SIDs are allowed/denied which access rights — the "permissions" users normally see and edit.</td></tr>
+            <tr><td><span class="term" data-term="SACL">SACL</span></td><td>Which operations get written to the Security event log — auditing, not access control.</td></tr>
+            <tr><td>NTFS Permissions</td><td>DACLs applied specifically to files/folders (Full Control, Modify, Read &amp; Execute, Write) — combine with share permissions, most restrictive wins.</td></tr>
+            <tr><td>Inheritance</td><td>Child objects inherit ACEs from their parent container unless explicitly blocked — the majority of real-world permission misconfigurations come from broken inheritance assumptions.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="callout callout-fun reveal">
+      <div class="co-icon"><i data-lucide="sparkles" class="w-4 h-4"></i></div>
+      <div><div class="callout-title">DID YOU KNOW?</div><div class="callout-body">Mandatory Integrity Control was added specifically to stop admin-level malware from silently tampering with browser processes — it's why a "Low" integrity sandboxed browser process can't write to your Documents folder even if the DACL would technically allow it.</div></div>
+    </div>
+
+  </main>
+
+  <aside class="hidden xl:block w-56 flex-none sticky top-24 h-[calc(100vh-7rem)] overflow-y-auto">
+    <div class="text-[11px] font-bold text-slate-500 tracking-wide mb-3">ON THIS PAGE</div>
+    <nav class="space-y-0.5">
+      <a href="#token-anatomy" class="toc-link">Token Anatomy</a>
+      <a href="#token-creation" class="toc-link">Token Creation &amp; Checks</a>
+      <a href="#acls" class="toc-link">DACL / SACL / NTFS</a>
+    </nav>
+    <div class="mt-8 glass p-4">
+      <div class="text-xs font-bold text-slate-300 mb-2 flex items-center gap-1.5"><i data-lucide="arrow-right-circle" class="w-3.5 h-3.5 text-blue-400"></i> Next up</div>
+      <a href="registry-profiles.html" class="text-sm text-cyan-300 hover:underline">Registry &amp; User Profiles →</a>
+    </div>
+  </aside>
+</div>
+
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/main.js"></script>
+</body>
+</html>

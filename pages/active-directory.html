@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Active Directory — Windows Internals Docs</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+<link rel="stylesheet" href="../assets/css/main.css">
+<style>body{font-family:'Inter','Segoe UI',sans-serif;}</style>
+</head>
+<body data-page="ad" class="antialiased">
+<div id="tooltip-pop"></div>
+
+<header class="topbar sticky top-0 z-40">
+  <div class="max-w-[1500px] mx-auto px-5 lg:px-8 h-16 flex items-center justify-between">
+    <a href="../index.html" class="flex items-center gap-2.5">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center shadow-lg shadow-blue-500/20"><i data-lucide="shield-half" class="w-4.5 h-4.5 text-white"></i></div>
+      <div class="leading-tight"><div class="text-[13px] font-bold text-white tracking-tight">Windows Internals</div><div class="text-[10px] text-slate-400 tracking-wide">MICROSOFT ENGINEERING DOCS</div></div>
+    </a>
+    <div class="hidden lg:flex items-center gap-1 text-[13px] text-slate-400">
+      <a href="../index.html" class="hover:text-white px-2">Home</a><i data-lucide="chevron-right" class="w-3.5 h-3.5"></i><span class="text-white px-2">Active Directory</span>
+    </div>
+    <button id="mobile-nav-toggle" class="lg:hidden w-9 h-9 rounded-lg border border-white/10 flex items-center justify-center text-slate-300"><i data-lucide="menu" class="w-4.5 h-4.5"></i></button>
+  </div>
+  <div id="mobile-nav-panel" class="hidden lg:hidden flex-col gap-1 px-5 pb-4 text-sm"></div>
+</header>
+
+<div class="max-w-[1500px] mx-auto px-5 lg:px-8 flex gap-8 pt-8 items-start">
+  <aside class="desktop-sidebar sticky top-24 w-64 flex-none h-[calc(100vh-7rem)] overflow-y-auto sidebar pr-2">
+    <div class="text-[11px] font-bold text-slate-500 tracking-wide mb-3 px-1">DOCUMENTATION</div>
+    <nav class="space-y-1 mb-6">
+      <a href="../index.html" class="side-link" data-nav="home"><i data-lucide="home" class="w-4 h-4"></i> Home</a>
+      <a href="boot-process.html" class="side-link" data-nav="boot"><span class="num">01</span> Boot Process</a>
+      <a href="authentication.html" class="side-link" data-nav="auth"><span class="num">02</span> Authentication</a>
+      <a href="kerberos.html" class="side-link" data-nav="kerberos"><span class="num">03</span> Kerberos Deep Dive</a>
+      <a href="active-directory.html" class="side-link" data-nav="ad"><span class="num">04</span> Active Directory</a>
+      <a href="tokens-authorization.html" class="side-link" data-nav="tokens"><span class="num">05</span> Tokens &amp; Authorization</a>
+      <a href="registry-profiles.html" class="side-link" data-nav="registry"><span class="num">06</span> Registry &amp; Profiles</a>
+      <a href="event-logs.html" class="side-link" data-nav="logs"><span class="num">07</span> Event Logs</a>
+      <a href="attack-techniques.html" class="side-link" data-nav="attacks"><span class="num">08</span> Attack Techniques</a>
+      <a href="soc-playbook.html" class="side-link" data-nav="soc"><span class="num">09</span> SOC Playbook</a>
+      <a href="interview-handbook.html" class="side-link" data-nav="interview"><span class="num">10</span> Interview Handbook</a>
+    </nav>
+  </aside>
+
+  <main class="flex-1 min-w-0 pb-32">
+    <div class="reveal in mb-10">
+      <div class="section-kicker">Part 3 · Directory Services</div>
+      <h1 class="text-3xl lg:text-4xl font-black tracking-tight mt-2">Active Directory</h1>
+      <p class="prose-muted max-w-3xl mt-4 text-[15px]">Active Directory is a distributed, replicated, hierarchical database of security principals. Kerberos is the authentication protocol; AD is the world it authenticates <i>into</i> — the source of truth for who exists and what they're allowed to do.</p>
+    </div>
+
+    <section id="structure" class="mb-16">
+      <h2 class="doc-h2 mb-5">Forest, Domain, Tree, OU</h2>
+      <div class="diagram-frame reveal mb-6">
+        <div class="mermaid">
+graph TD
+  F["Forest — corp<br/>(schema + config boundary)"]
+  F --> T1["Tree: corp.local"]
+  F --> T2["Tree: fabrikam.com<br/>(different namespace, same forest)"]
+  T1 --> D1["Domain: corp.local"]
+  T1 --> D2["Domain: emea.corp.local<br/>(child domain)"]
+  D1 --> OU1["OU: Sales"]
+  D1 --> OU2["OU: IT"]
+  OU2 --> OU3["OU: Servers"]
+  D1 -.Trust.- D2
+        </div>
+      </div>
+      <div class="grid md:grid-cols-2 gap-5">
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">Domain</h3><p class="prose-muted text-sm">A security and administrative boundary — its own user/group database, its own Kerberos realm, its own <span class="term" data-term="KDC">KDC</span>s. Each domain has at least one <span class="term" data-term="KDC">Domain Controller</span>.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">Forest</h3><p class="prose-muted text-sm">The true security boundary in AD — a set of domains sharing a common schema, configuration partition, and Global Catalog. Anything inside one forest can, in principle, be reached by a Forest/Enterprise Admin.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">Tree</h3><p class="prose-muted text-sm">A set of domains in a forest that share a contiguous DNS namespace (e.g. <code>corp.local</code> and <code>emea.corp.local</code>). A forest can contain multiple trees with unrelated namespaces.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">Organizational Unit (OU)</h3><p class="prose-muted text-sm">A container <i>within</i> a domain used to organize objects and scope Group Policy / delegated administration — not a security boundary; it's purely administrative.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1"><span class="term" data-term="Golden Ticket">Trust</span></h3><p class="prose-muted text-sm">A relationship letting principals in one domain/forest authenticate to resources in another — one-way or two-way, transitive or non-transitive. Trusts are also the path attackers use for cross-domain/cross-forest lateral movement.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">Sites</h3><p class="prose-muted text-sm">A mapping of your physical/network topology (IP subnets) onto AD, used to keep authentication and replication traffic local to fast links instead of crossing slow WAN links unnecessarily.</p></div>
+      </div>
+    </section>
+
+    <section id="dc-kdc" class="mb-16">
+      <h2 class="doc-h2 mb-5">Domain Controllers, KDC, LDAP, DNS</h2>
+      <div class="grid md:grid-cols-2 gap-5">
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">Domain Controller</h3><p class="prose-muted text-sm">A server hosting a writable (or read-only) copy of the AD database (<code>ntds.dit</code>) and running the <code>NTDS</code>, <code>Netlogon</code>, and <span class="term" data-term="KDC">KDC</span> services.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1"><span class="term" data-term="LDAP">LDAP</span></h3><p class="prose-muted text-sm">The protocol clients use to query and modify AD objects (port 389, or 636 for LDAPS). Nearly every AD-aware tool — from <code>dsquery</code> to BloodHound — talks LDAP under the hood.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1"><span class="term" data-term="DNS">DNS</span></h3><p class="prose-muted text-sm">AD is DNS-dependent by design — clients locate DCs and KDCs via SRV records (<code>_ldap._tcp.dc._msdcs.corp.local</code>). Broken DNS breaks Kerberos, since SPN resolution and KDC discovery both go through it.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">Global Catalog</h3><p class="prose-muted text-sm">A partial, forest-wide searchable index of every object (port 3268/3269), letting a client find an object anywhere in the forest without knowing which domain it lives in.</p></div>
+      </div>
+    </section>
+
+    <section id="sysvol-gpo" class="mb-16">
+      <h2 class="doc-h2 mb-5">Group Policy, SYSVOL &amp; NETLOGON</h2>
+      <div class="glass-strong p-6 reveal">
+        <p class="prose-muted text-sm mb-4">Group Policy Objects (GPOs) are stored in two halves that must stay in sync: the <b>GPC</b> (Group Policy Container, an AD object holding version numbers and links) and the <b>GPT</b> (Group Policy Template, the actual files on disk under <span class="term" data-term="SYSVOL">SYSVOL</span>). Every DC replicates a full copy of SYSVOL, which is shared out as the <code>\\domain\SYSVOL</code> and <code>\\domain\NETLOGON</code> shares that every domain-joined machine reads at boot and logon (logon scripts live in NETLOGON).</p>
+        <div class="overflow-x-auto">
+          <table class="reg-table">
+            <thead><tr><th>Path</th><th>Purpose</th></tr></thead>
+            <tbody>
+              <tr><td><code>\\corp.local\SYSVOL\corp.local\Policies</code></td><td>GPT files for every GPO — scripts, registry.pol, security templates.</td></tr>
+              <tr><td><code>\\corp.local\NETLOGON</code></td><td>Logon scripts and any files that must be reachable pre-authentication-complete.</td></tr>
+              <tr><td>Replication engine</td><td>DFS-R (modern) or the legacy File Replication Service (FRS) keeps every DC's SYSVOL copy identical.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="replication-fsmo" class="mb-16">
+      <h2 class="doc-h2 mb-5">Replication &amp; FSMO Roles</h2>
+      <p class="prose-muted text-sm max-w-3xl mb-5">AD is a <b>multi-master</b> database — almost any DC can accept a write, then replicates it to the others. Five operations, though, can't safely be multi-master (they'd create irreconcilable conflicts), so exactly one DC in the relevant scope holds each as a <span class="term" data-term="FSMO">FSMO</span> role.</p>
+      <div class="overflow-x-auto glass p-1 reveal">
+        <table class="reg-table">
+          <thead><tr><th>FSMO Role</th><th>Scope</th><th>Why it can't be multi-master</th></tr></thead>
+          <tbody>
+            <tr><td>Schema Master</td><td>Forest (1 per forest)</td><td>Two simultaneous schema changes could produce an inconsistent object model forest-wide.</td></tr>
+            <tr><td>Domain Naming Master</td><td>Forest (1 per forest)</td><td>Prevents two domains from being added to the forest with the same name.</td></tr>
+            <tr><td>RID Master</td><td>Domain (1 per domain)</td><td>Hands out blocks of RIDs to each DC so no two objects in the domain ever get the same SID.</td></tr>
+            <tr><td>PDC Emulator</td><td>Domain (1 per domain)</td><td>Authoritative time source, password-change urgency master, and legacy PDC compatibility target.</td></tr>
+            <tr><td>Infrastructure Master</td><td>Domain (1 per domain)</td><td>Keeps cross-domain object references (group membership across domains) up to date.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout callout-info reveal mt-5">
+        <div class="co-icon"><i data-lucide="info" class="w-4 h-4"></i></div>
+        <div><div class="callout-title"><span class="term" data-term="RODC">RODC</span> — Read-Only Domain Controller</div><div class="callout-body">Holds a read-only copy of the AD database — no outbound password writes, and by default caches <i>no</i> user credentials at all until explicitly allowed via the Password Replication Policy. Designed for low-physical-security sites (branch offices) where a full writable DC would be too risky if the hardware were stolen.</div></div>
+      </div>
+    </section>
+
+    <div class="callout callout-fun reveal">
+      <div class="co-icon"><i data-lucide="sparkles" class="w-4 h-4"></i></div>
+      <div><div class="callout-title">DID YOU KNOW?</div><div class="callout-body">An OU is not a security boundary — an Enterprise/Domain Admin can always reach into any OU. Only the domain (and ultimately the forest) is a real security boundary in AD.</div></div>
+    </div>
+
+  </main>
+
+  <aside class="hidden xl:block w-56 flex-none sticky top-24 h-[calc(100vh-7rem)] overflow-y-auto">
+    <div class="text-[11px] font-bold text-slate-500 tracking-wide mb-3">ON THIS PAGE</div>
+    <nav class="space-y-0.5">
+      <a href="#structure" class="toc-link">Forest / Domain / Tree / OU</a>
+      <a href="#dc-kdc" class="toc-link">DC, KDC, LDAP, DNS</a>
+      <a href="#sysvol-gpo" class="toc-link">Group Policy &amp; SYSVOL</a>
+      <a href="#replication-fsmo" class="toc-link">Replication &amp; FSMO</a>
+    </nav>
+    <div class="mt-8 glass p-4">
+      <div class="text-xs font-bold text-slate-300 mb-2 flex items-center gap-1.5"><i data-lucide="arrow-right-circle" class="w-3.5 h-3.5 text-blue-400"></i> Next up</div>
+      <a href="tokens-authorization.html" class="text-sm text-cyan-300 hover:underline">Tokens &amp; Authorization →</a>
+    </div>
+  </aside>
+</div>
+
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/main.js"></script>
+</body>
+</html>

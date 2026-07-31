@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Windows Attack Techniques — Windows Internals Docs</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+<link rel="stylesheet" href="../assets/css/main.css">
+<style>body{font-family:'Inter','Segoe UI',sans-serif;}</style>
+</head>
+<body data-page="attacks" class="antialiased">
+<div id="tooltip-pop"></div>
+
+<header class="topbar sticky top-0 z-40">
+  <div class="max-w-[1500px] mx-auto px-5 lg:px-8 h-16 flex items-center justify-between">
+    <a href="../index.html" class="flex items-center gap-2.5">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center shadow-lg shadow-blue-500/20"><i data-lucide="shield-half" class="w-4.5 h-4.5 text-white"></i></div>
+      <div class="leading-tight"><div class="text-[13px] font-bold text-white tracking-tight">Windows Internals</div><div class="text-[10px] text-slate-400 tracking-wide">MICROSOFT ENGINEERING DOCS</div></div>
+    </a>
+    <div class="hidden lg:flex items-center gap-1 text-[13px] text-slate-400">
+      <a href="../index.html" class="hover:text-white px-2">Home</a><i data-lucide="chevron-right" class="w-3.5 h-3.5"></i><span class="text-white px-2">Attack Techniques</span>
+    </div>
+    <button id="mobile-nav-toggle" class="lg:hidden w-9 h-9 rounded-lg border border-white/10 flex items-center justify-center text-slate-300"><i data-lucide="menu" class="w-4.5 h-4.5"></i></button>
+  </div>
+  <div id="mobile-nav-panel" class="hidden lg:hidden flex-col gap-1 px-5 pb-4 text-sm"></div>
+</header>
+
+<div class="max-w-[1500px] mx-auto px-5 lg:px-8 flex gap-8 pt-8 items-start">
+  <aside class="desktop-sidebar sticky top-24 w-64 flex-none h-[calc(100vh-7rem)] overflow-y-auto sidebar pr-2">
+    <div class="text-[11px] font-bold text-slate-500 tracking-wide mb-3 px-1">DOCUMENTATION</div>
+    <nav class="space-y-1 mb-6">
+      <a href="../index.html" class="side-link" data-nav="home"><i data-lucide="home" class="w-4 h-4"></i> Home</a>
+      <a href="boot-process.html" class="side-link" data-nav="boot"><span class="num">01</span> Boot Process</a>
+      <a href="authentication.html" class="side-link" data-nav="auth"><span class="num">02</span> Authentication</a>
+      <a href="kerberos.html" class="side-link" data-nav="kerberos"><span class="num">03</span> Kerberos Deep Dive</a>
+      <a href="active-directory.html" class="side-link" data-nav="ad"><span class="num">04</span> Active Directory</a>
+      <a href="tokens-authorization.html" class="side-link" data-nav="tokens"><span class="num">05</span> Tokens &amp; Authorization</a>
+      <a href="registry-profiles.html" class="side-link" data-nav="registry"><span class="num">06</span> Registry &amp; Profiles</a>
+      <a href="event-logs.html" class="side-link" data-nav="logs"><span class="num">07</span> Event Logs</a>
+      <a href="attack-techniques.html" class="side-link" data-nav="attacks"><span class="num">08</span> Attack Techniques</a>
+      <a href="soc-playbook.html" class="side-link" data-nav="soc"><span class="num">09</span> SOC Playbook</a>
+      <a href="interview-handbook.html" class="side-link" data-nav="interview"><span class="num">10</span> Interview Handbook</a>
+    </nav>
+  </aside>
+
+  <main class="flex-1 min-w-0 pb-32">
+    <div class="reveal in mb-10">
+      <div class="section-kicker">Offensive Perspective · For Defensive Use</div>
+      <h1 class="text-3xl lg:text-4xl font-black tracking-tight mt-2">Windows Attack Techniques</h1>
+      <p class="prose-muted max-w-3xl mt-4 text-[15px]">Every technique here is a documented, publicly-known abuse of a legitimate Windows mechanism you've already read about. Understanding the mechanism is what lets a defender recognize it — the "how" always comes with a link back to the internals that make it possible.</p>
+    </div>
+
+    <section id="attack-path" class="mb-16">
+      <h2 class="doc-h2 mb-5">A Typical Intrusion Chain</h2>
+      <div class="diagram-frame reveal">
+        <div class="mermaid">
+graph TD
+  A[Initial Access<br/>phishing / exposed service] --> B[Execution<br/>PowerShell / WMI]
+  B --> C[Credential Access<br/>LSASS dump / NTLM / Kerberoast]
+  C --> D[Persistence<br/>Registry Run keys / Services / Scheduled Tasks / COM hijack]
+  D --> E[Privilege Escalation<br/>token theft / service misconfig]
+  E --> F[Lateral Movement<br/>Pass the Hash / Pass the Ticket / NTLM Relay]
+  F --> G[Domain Dominance<br/>Golden Ticket via krbtgt]
+        </div>
+      </div>
+    </section>
+
+    <div class="space-y-5 mb-10">
+
+      <article class="glass p-5 reveal" id="atk-lsass">
+        <div class="flex items-center gap-2 mb-2"><span class="badge badge-red">CREDENTIAL ACCESS</span><h3 class="doc-h3 text-base">LSASS Memory Dumping</h3></div>
+        <p class="prose-muted text-sm mb-2">Open a handle to <code>lsass.exe</code> with <code>PROCESS_VM_READ</code>, then call <code>MiniDumpWriteDump</code> (directly, or via the <code>comsvcs.dll</code> <code>MiniDump</code> export as a living-off-the-land trick) to write LSASS's memory to disk for offline parsing of credential material. See <a href="boot-process.html#exe-lsass" class="text-cyan-300 underline">lsass.exe internals</a>.</p>
+        <div class="callout callout-red mt-3"><div class="co-icon"><i data-lucide="skull" class="w-4 h-4"></i></div><div><div class="callout-title">RED TEAM NOTE</div><div class="callout-body">RunAsPPL and Credential Guard both raise the bar significantly — a straight <code>OpenProcess</code> handle grab fails against a protected LSASS, forcing attackers toward kernel-level tricks or targeting endpoints where those protections aren't enabled.</div></div></div>
+      </article>
+
+      <article class="glass p-5 reveal" id="atk-kerberos">
+        <div class="flex items-center gap-2 mb-2"><span class="badge badge-red">CREDENTIAL ACCESS</span><h3 class="doc-h3 text-base">Kerberos Abuse</h3></div>
+        <p class="prose-muted text-sm">Kerberoasting, Golden/Silver Tickets, and Pass the Ticket — covered in full in the <a href="kerberos.html#attacks" class="text-cyan-300 underline">Kerberos Deep Dive</a>. The common thread: Kerberos trusts anything encrypted with the right key, so stealing or cracking the right key (service account password, or the <code>krbtgt</code> hash) is as good as authenticating normally.</p>
+      </article>
+
+      <article class="glass p-5 reveal" id="atk-ntlm">
+        <div class="flex items-center gap-2 mb-2"><span class="badge badge-red">CREDENTIAL ACCESS / LATERAL MOVEMENT</span><h3 class="doc-h3 text-base">NTLM Abuse</h3></div>
+        <p class="prose-muted text-sm">Pass the Hash and NTLM Relay — see <a href="kerberos.html#attacks" class="text-cyan-300 underline">Kerberos Deep Dive</a>. NTLM's stateless challenge-response design means the hash alone is a complete credential; a coercion technique (e.g. forcing a server to authenticate to an attacker-controlled listener) can trigger a relay without any user interaction at all.</p>
+      </article>
+
+      <article class="glass p-5 reveal" id="atk-services">
+        <div class="flex items-center gap-2 mb-2"><span class="badge badge-red">PERSISTENCE / PRIV ESC</span><h3 class="doc-h3 text-base">Service Abuse</h3></div>
+        <p class="prose-muted text-sm">Create a new service (<code>sc.exe create</code>) or hijack an existing one's <code>ImagePath</code>/<code>binPath</code> to run arbitrary code as SYSTEM at boot. Weak service permissions (a writable binary path, or a modifiable service config) let a low-privilege user escalate by pointing an existing SYSTEM-run service at their own binary.</p>
+      </article>
+
+      <article class="glass p-5 reveal" id="atk-registry">
+        <div class="flex items-center gap-2 mb-2"><span class="badge badge-red">PERSISTENCE</span><h3 class="doc-h3 text-base">Registry Persistence</h3></div>
+        <p class="prose-muted text-sm">Run/RunOnce keys, Winlogon Shell/Userinit hijack, and IFEO Debugger redirection — see the full <a href="registry-profiles.html#autostart" class="text-cyan-300 underline">autostart locations table</a>. All of these are legitimate OS features; the abuse is purely in what gets pointed at them.</p>
+      </article>
+
+      <article class="glass p-5 reveal" id="atk-tasks">
+        <div class="flex items-center gap-2 mb-2"><span class="badge badge-red">PERSISTENCE</span><h3 class="doc-h3 text-base">Scheduled Task Abuse</h3></div>
+        <p class="prose-muted text-sm">Register a task (<code>schtasks.exe /create</code>) that runs at logon, on a schedule, or on a specific event trigger — commonly hosted via <a href="boot-process.html#executables" class="text-cyan-300 underline">taskhostw.exe</a>, and often configured to run as SYSTEM with "Run whether user is logged on or not."</p>
+      </article>
+
+      <article class="glass p-5 reveal" id="atk-wmi">
+        <div class="flex items-center gap-2 mb-2"><span class="badge badge-red">EXECUTION / PERSISTENCE / LATERAL MOVEMENT</span><h3 class="doc-h3 text-base">WMI Abuse</h3></div>
+        <p class="prose-muted text-sm">WMI provides both remote execution (<code>wmic process call create</code> — no new listening port, rides over existing RPC/DCOM) and persistence via <b>WMI Event Subscriptions</b> (a permanent event filter + consumer pair that fires a payload on a system event, entirely invisible to the Run-keys/Services/Scheduled-Tasks checklist most responders reach for first).</p>
+      </article>
+
+      <article class="glass p-5 reveal" id="atk-powershell">
+        <div class="flex items-center gap-2 mb-2"><span class="badge badge-red">EXECUTION / DEFENSE EVASION</span><h3 class="doc-h3 text-base">PowerShell Abuse</h3></div>
+        <p class="prose-muted text-sm">Fileless execution directly in memory (<code>IEX (New-Object Net.WebClient).DownloadString(...)</code> patterns), AMSI bypass attempts, and heavy obfuscation (Base64 + gzip, string concatenation) to slip past signature-based detection — countered primarily by Script Block Logging capturing the de-obfuscated content regardless of how it was written on the wire.</p>
+      </article>
+
+      <article class="glass p-5 reveal" id="atk-dllorder">
+        <div class="flex items-center gap-2 mb-2"><span class="badge badge-red">DEFENSE EVASION / PRIV ESC</span><h3 class="doc-h3 text-base">DLL Search Order Hijacking</h3></div>
+        <p class="prose-muted text-sm">Windows searches for a DLL in a defined order (the application's own directory first, then system directories, then PATH). Dropping a malicious DLL with the exact name of a legitimate one somewhere earlier in that search order gets it loaded by a legitimate, often signed, host process — useful for both persistence and evading allow-listing that only checks the parent EXE.</p>
+      </article>
+
+      <article class="glass p-5 reveal" id="atk-com">
+        <div class="flex items-center gap-2 mb-2"><span class="badge badge-red">PERSISTENCE / DEFENSE EVASION</span><h3 class="doc-h3 text-base">COM Hijacking</h3></div>
+        <p class="prose-muted text-sm">Overwrite a COM class's <code>InprocServer32</code> registration — often in the per-user, no-admin-required <code>HKCU\Software\Classes\CLSID\{GUID}</code> path (backed by <a href="registry-profiles.html#hives" class="text-cyan-300 underline"><code>UsrClass.dat</code></a>) — so that any legitimate application instantiating that CLSID unknowingly loads the attacker's DLL instead.</p>
+      </article>
+
+    </div>
+
+    <div class="callout callout-fun reveal">
+      <div class="co-icon"><i data-lucide="sparkles" class="w-4 h-4"></i></div>
+      <div><div class="callout-title">DID YOU KNOW?</div><div class="callout-body">WMI Event Subscriptions are one of the oldest persistence tricks still in wide use precisely because they leave no file on disk and no entry in Run keys, Services, or Scheduled Tasks — they live entirely inside the WMI repository (<code>OBJECTS.DATA</code>).</div></div>
+    </div>
+
+  </main>
+
+  <aside class="hidden xl:block w-56 flex-none sticky top-24 h-[calc(100vh-7rem)] overflow-y-auto">
+    <div class="text-[11px] font-bold text-slate-500 tracking-wide mb-3">ON THIS PAGE</div>
+    <nav class="space-y-0.5">
+      <a href="#attack-path" class="toc-link">Intrusion Chain</a>
+      <a href="#atk-lsass" class="toc-link">LSASS Dumping</a>
+      <a href="#atk-wmi" class="toc-link">WMI Abuse</a>
+      <a href="#atk-com" class="toc-link">COM Hijacking</a>
+    </nav>
+    <div class="mt-8 glass p-4">
+      <div class="text-xs font-bold text-slate-300 mb-2 flex items-center gap-1.5"><i data-lucide="arrow-right-circle" class="w-3.5 h-3.5 text-blue-400"></i> Next up</div>
+      <a href="soc-playbook.html" class="text-sm text-cyan-300 hover:underline">SOC Analyst Playbook →</a>
+    </div>
+  </aside>
+</div>
+
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/main.js"></script>
+</body>
+</html>

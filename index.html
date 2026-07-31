@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Windows Internals &amp; Security — Microsoft Engineering Docs</title>
+<meta name="description" content="Internal-style documentation on Windows logon, LSASS, Kerberos, Active Directory, tokens, event logs, attack techniques, and SOC playbooks." />
+
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+<link rel="stylesheet" href="assets/css/main.css">
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: { sans: ['Inter','Segoe UI','sans-serif'], mono: ['JetBrains Mono','monospace'] },
+      }
+    }
+  }
+</script>
+<style>body{font-family:'Inter','Segoe UI',sans-serif;}</style>
+</head>
+<body data-page="home" class="antialiased">
+
+<div id="tooltip-pop"></div>
+
+<!-- ============ TOP BAR ============ -->
+<header class="topbar sticky top-0 z-40">
+  <div class="max-w-[1400px] mx-auto px-5 lg:px-8 h-16 flex items-center justify-between">
+    <a href="index.html" class="flex items-center gap-2.5">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center shadow-lg shadow-blue-500/20">
+        <i data-lucide="shield-half" class="w-4.5 h-4.5 text-white"></i>
+      </div>
+      <div class="leading-tight">
+        <div class="text-[13px] font-bold text-white tracking-tight">Windows Internals</div>
+        <div class="text-[10px] text-slate-400 tracking-wide">MICROSOFT ENGINEERING DOCS</div>
+      </div>
+    </a>
+    <nav class="hidden lg:flex items-center gap-1 text-[13px]">
+      <a href="pages/boot-process.html" class="px-3 py-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/5 transition">Boot</a>
+      <a href="pages/authentication.html" class="px-3 py-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/5 transition">Authentication</a>
+      <a href="pages/kerberos.html" class="px-3 py-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/5 transition">Kerberos</a>
+      <a href="pages/attack-techniques.html" class="px-3 py-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/5 transition">Attacks</a>
+      <a href="pages/interview-handbook.html" class="px-3 py-2 rounded-lg bg-blue-500/15 border border-blue-500/30 text-blue-300 font-semibold">Interview Handbook</a>
+    </nav>
+    <button id="mobile-nav-toggle" class="lg:hidden w-9 h-9 rounded-lg border border-white/10 flex items-center justify-center text-slate-300">
+      <i data-lucide="menu" class="w-4.5 h-4.5"></i>
+    </button>
+  </div>
+  <div id="mobile-nav-panel" class="hidden lg:hidden flex-col gap-1 px-5 pb-4 text-sm">
+    <a href="pages/boot-process.html" class="side-link" data-nav="boot"><span class="num">01</span> Boot Process</a>
+    <a href="pages/authentication.html" class="side-link" data-nav="auth"><span class="num">02</span> Authentication</a>
+    <a href="pages/kerberos.html" class="side-link" data-nav="kerberos"><span class="num">03</span> Kerberos Deep Dive</a>
+    <a href="pages/active-directory.html" class="side-link" data-nav="ad"><span class="num">04</span> Active Directory</a>
+    <a href="pages/tokens-authorization.html" class="side-link" data-nav="tokens"><span class="num">05</span> Tokens &amp; Authorization</a>
+    <a href="pages/registry-profiles.html" class="side-link" data-nav="registry"><span class="num">06</span> Registry &amp; Profiles</a>
+    <a href="pages/event-logs.html" class="side-link" data-nav="logs"><span class="num">07</span> Event Logs</a>
+    <a href="pages/attack-techniques.html" class="side-link" data-nav="attacks"><span class="num">08</span> Attack Techniques</a>
+    <a href="pages/soc-playbook.html" class="side-link" data-nav="soc"><span class="num">09</span> SOC Playbook</a>
+    <a href="pages/interview-handbook.html" class="side-link" data-nav="interview"><span class="num">10</span> Interview Handbook</a>
+  </div>
+</header>
+
+<!-- ============ HERO ============ -->
+<section class="relative overflow-hidden hero-grid-bg">
+  <div class="max-w-[1400px] mx-auto px-5 lg:px-8 pt-16 pb-20 lg:pt-24 lg:pb-28 grid lg:grid-cols-2 gap-14 items-center relative">
+    <div class="reveal in">
+      <div class="flex items-center gap-2 mb-5">
+        <span class="chip">Internal Engineering Doc</span>
+        <span class="chip">Rev. 2026.07</span>
+        <span class="chip flex items-center gap-1"><i data-lucide="lock" class="w-3 h-3"></i> Classification: Training</span>
+      </div>
+      <h1 class="text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight leading-[1.05]">
+        How <span class="grad-text">Windows Logon</span><br/> actually works.
+      </h1>
+      <p class="mt-6 text-lg text-slate-300/90 max-w-xl leading-relaxed">
+        Not a blog post — a distinguished-engineer walkthrough of the boot chain, LSASS, credential
+        providers, Kerberos, Active Directory, tokens, and the registry, written the way we train new
+        hires on the Windows Security team. Every diagram is real. Every DLL is named.
+      </p>
+      <div class="mt-8 flex flex-wrap gap-3">
+        <a href="pages/boot-process.html" class="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-blue-500 to-violet-500 text-white text-sm font-bold shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:-translate-y-0.5 transition">
+          <i data-lucide="power" class="w-4 h-4"></i> Start at Power-On
+        </a>
+        <a href="pages/interview-handbook.html" class="inline-flex items-center gap-2 px-5 py-3 rounded-xl glass text-sm font-bold text-slate-200 hover:border-blue-400/40 transition">
+          <i data-lucide="briefcase" class="w-4 h-4"></i> 100 Interview Questions
+        </a>
+      </div>
+      <div class="mt-10 flex flex-wrap gap-x-8 gap-y-3 text-xs text-slate-400">
+        <div class="flex items-center gap-2"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-400"></i> Blue Team + Red Team notes</div>
+        <div class="flex items-center gap-2"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-400"></i> Mermaid sequence diagrams</div>
+        <div class="flex items-center gap-2"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-400"></i> Registry-level detail</div>
+      </div>
+    </div>
+
+    <!-- Animated SVG: boot-to-desktop pipeline -->
+    <div class="reveal-scale in glass-strong p-6 lg:p-8">
+      <svg viewBox="0 0 520 420" class="w-full h-auto">
+        <defs>
+          <linearGradient id="edge" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#3b82f6"/>
+            <stop offset="100%" stop-color="#22d3ee"/>
+          </linearGradient>
+        </defs>
+        <!-- connecting spine -->
+        <path d="M60,40 V380" stroke="url(#edge)" stroke-width="2" fill="none" class="flow-line" opacity="0.55"/>
+
+        <!-- nodes -->
+        <g font-family="Inter, sans-serif">
+          <!-- 1 -->
+          <g class="pulse-node" style="animation-delay:0s">
+            <circle cx="60" cy="40" r="7" fill="#3b82f6"/>
+            <text x="82" y="45" fill="#e8ecfb" font-size="15" font-weight="700">Power On / UEFI</text>
+            <text x="82" y="62" fill="#7c88ab" font-size="11">Secure Boot verifies bootmgr</text>
+          </g>
+          <!-- 2 -->
+          <g class="pulse-node" style="animation-delay:.3s">
+            <circle cx="60" cy="115" r="7" fill="#3b82f6"/>
+            <text x="82" y="120" fill="#e8ecfb" font-size="15" font-weight="700">bootmgr → winload.efi</text>
+            <text x="82" y="137" fill="#7c88ab" font-size="11">Reads BCD, loads ntoskrnl.exe</text>
+          </g>
+          <!-- 3 -->
+          <g class="pulse-node" style="animation-delay:.6s">
+            <circle cx="60" cy="190" r="7" fill="#8b5cf6"/>
+            <text x="82" y="195" fill="#e8ecfb" font-size="15" font-weight="700">ntoskrnl.exe + HAL</text>
+            <text x="82" y="212" fill="#7c88ab" font-size="11">Kernel init → smss.exe (Session 0)</text>
+          </g>
+          <!-- 4 -->
+          <g class="pulse-node" style="animation-delay:.9s">
+            <circle cx="60" cy="265" r="7" fill="#22d3ee"/>
+            <text x="82" y="270" fill="#e8ecfb" font-size="15" font-weight="700">wininit → services.exe / lsass.exe</text>
+            <text x="82" y="287" fill="#7c88ab" font-size="11">SCM starts services; LSA initializes</text>
+          </g>
+          <!-- 5 -->
+          <g class="pulse-node" style="animation-delay:1.2s">
+            <circle cx="60" cy="340" r="7" fill="#22d3ee"/>
+            <text x="82" y="345" fill="#e8ecfb" font-size="15" font-weight="700">winlogon.exe → logonui.exe</text>
+            <text x="82" y="362" fill="#7c88ab" font-size="11">Secure desktop, credential providers</text>
+          </g>
+          <!-- 6 -->
+          <g class="pulse-node" style="animation-delay:1.5s">
+            <circle cx="60" cy="405" r="7" fill="#34d399"/>
+            <text x="82" y="410" fill="#e8ecfb" font-size="15" font-weight="700">userinit.exe → explorer.exe</text>
+          </g>
+        </g>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SITE MAP ============ -->
+<main class="max-w-[1400px] mx-auto px-5 lg:px-8 pb-24">
+
+  <div class="reveal flex items-end justify-between mb-6 mt-4">
+    <div>
+      <div class="section-kicker">Documentation Map</div>
+      <h2 class="doc-h2 mt-1">Ten sections, one mental model</h2>
+    </div>
+  </div>
+
+  <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+
+    <a href="pages/boot-process.html" class="glass glass-card reveal p-6 block">
+      <div class="w-10 h-10 rounded-xl bg-blue-500/15 flex items-center justify-center mb-4"><i data-lucide="power" class="w-5 h-5 text-blue-400"></i></div>
+      <div class="text-[11px] text-slate-500 font-bold tracking-wide mb-1">01 · PART 1</div>
+      <h3 class="doc-h3">Windows Boot Process</h3>
+      <p class="text-sm text-slate-400 mt-2 leading-relaxed">UEFI, Secure Boot, TPM, BCD, winload.efi, ntoskrnl.exe, smss.exe, and every process from power-on to the logon screen.</p>
+    </a>
+
+    <a href="pages/authentication.html" class="glass glass-card reveal p-6 block">
+      <div class="w-10 h-10 rounded-xl bg-violet-500/15 flex items-center justify-center mb-4"><i data-lucide="fingerprint" class="w-5 h-5 text-violet-400"></i></div>
+      <div class="text-[11px] text-slate-500 font-bold tracking-wide mb-1">02 · PART 2</div>
+      <h3 class="doc-h3">Windows Authentication</h3>
+      <p class="text-sm text-slate-400 mt-2 leading-relaxed">Credential providers, Winlogon, LSASS, and every authentication package DLL from msv1_0 to schannel.</p>
+    </a>
+
+    <a href="pages/kerberos.html" class="glass glass-card reveal p-6 block">
+      <div class="w-10 h-10 rounded-xl bg-cyan-500/15 flex items-center justify-center mb-4"><i data-lucide="ticket" class="w-5 h-5 text-cyan-400"></i></div>
+      <div class="text-[11px] text-slate-500 font-bold tracking-wide mb-1">03 · PART 3</div>
+      <h3 class="doc-h3">Kerberos Deep Dive</h3>
+      <p class="text-sm text-slate-400 mt-2 leading-relaxed">AS-REQ/TGT, TGS-REQ/Service Ticket, PAC, SPNs, Golden/Silver Tickets, Kerberoasting.</p>
+    </a>
+
+    <a href="pages/active-directory.html" class="glass glass-card reveal p-6 block">
+      <div class="w-10 h-10 rounded-xl bg-amber-500/15 flex items-center justify-center mb-4"><i data-lucide="building-2" class="w-5 h-5 text-amber-400"></i></div>
+      <div class="text-[11px] text-slate-500 font-bold tracking-wide mb-1">04 · PART 3</div>
+      <h3 class="doc-h3">Active Directory</h3>
+      <p class="text-sm text-slate-400 mt-2 leading-relaxed">Forests, domains, OUs, trusts, sites, replication, FSMO roles, SYSVOL, and Group Policy.</p>
+    </a>
+
+    <a href="pages/tokens-authorization.html" class="glass glass-card reveal p-6 block">
+      <div class="w-10 h-10 rounded-xl bg-rose-500/15 flex items-center justify-center mb-4"><i data-lucide="key-round" class="w-5 h-5 text-rose-400"></i></div>
+      <div class="text-[11px] text-slate-500 font-bold tracking-wide mb-1">05 · PART 4</div>
+      <h3 class="doc-h3">Tokens &amp; Authorization</h3>
+      <p class="text-sm text-slate-400 mt-2 leading-relaxed">Access tokens, SIDs, integrity levels, UAC, DACL/SACL, the SRM, and Object Manager.</p>
+    </a>
+
+    <a href="pages/registry-profiles.html" class="glass glass-card reveal p-6 block">
+      <div class="w-10 h-10 rounded-xl bg-emerald-500/15 flex items-center justify-center mb-4"><i data-lucide="folder-cog" class="w-5 h-5 text-emerald-400"></i></div>
+      <div class="text-[11px] text-slate-500 font-bold tracking-wide mb-1">06 · PART 4</div>
+      <h3 class="doc-h3">Registry &amp; User Profiles</h3>
+      <p class="text-sm text-slate-400 mt-2 leading-relaxed">NTUSER.DAT, hives, shell init, Run keys, IFEO, scheduled tasks, and persistence mechanisms.</p>
+    </a>
+
+    <a href="pages/event-logs.html" class="glass glass-card reveal p-6 block">
+      <div class="w-10 h-10 rounded-xl bg-sky-500/15 flex items-center justify-center mb-4"><i data-lucide="file-text" class="w-5 h-5 text-sky-400"></i></div>
+      <div class="text-[11px] text-slate-500 font-bold tracking-wide mb-1">07</div>
+      <h3 class="doc-h3">Windows Event Logs</h3>
+      <p class="text-sm text-slate-400 mt-2 leading-relaxed">Security.evtx, Sysmon, Defender logs, and the event IDs every analyst must know cold.</p>
+    </a>
+
+    <a href="pages/attack-techniques.html" class="glass glass-card reveal p-6 block">
+      <div class="w-10 h-10 rounded-xl bg-red-500/15 flex items-center justify-center mb-4"><i data-lucide="swords" class="w-5 h-5 text-red-400"></i></div>
+      <div class="text-[11px] text-slate-500 font-bold tracking-wide mb-1">08</div>
+      <h3 class="doc-h3">Windows Attack Techniques</h3>
+      <p class="text-sm text-slate-400 mt-2 leading-relaxed">How LSASS, Kerberos, NTLM, services, WMI, and COM get abused — with attack-path diagrams.</p>
+    </a>
+
+    <a href="pages/soc-playbook.html" class="glass glass-card reveal p-6 block">
+      <div class="w-10 h-10 rounded-xl bg-indigo-500/15 flex items-center justify-center mb-4"><i data-lucide="radar" class="w-5 h-5 text-indigo-400"></i></div>
+      <div class="text-[11px] text-slate-500 font-bold tracking-wide mb-1">09</div>
+      <h3 class="doc-h3">SOC Analyst Playbook</h3>
+      <p class="text-sm text-slate-400 mt-2 leading-relaxed">Detection, investigation, and mitigation with Sigma, YARA, Sysmon, Defender, and Sentinel.</p>
+    </a>
+
+    <a href="pages/interview-handbook.html" class="glass glass-card reveal p-6 block sm:col-span-2 lg:col-span-1 ring-1 ring-blue-400/30">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center mb-4"><i data-lucide="briefcase" class="w-5 h-5 text-white"></i></div>
+      <div class="text-[11px] text-blue-300 font-bold tracking-wide mb-1">10 · BONUS</div>
+      <h3 class="doc-h3">Windows Interview Handbook</h3>
+      <p class="text-sm text-slate-400 mt-2 leading-relaxed">100 Microsoft / Windows Server / SOC interview questions, fully answered.</p>
+    </a>
+  </div>
+
+  <!-- Did you know cards -->
+  <div class="mt-16 reveal">
+    <div class="section-kicker">Did You Know?</div>
+    <h2 class="doc-h2 mt-1 mb-6">Fun facts engineers actually use</h2>
+  </div>
+  <div class="grid sm:grid-cols-3 gap-5">
+    <div class="callout callout-fun reveal">
+      <div class="co-icon"><i data-lucide="sparkles" class="w-4 h-4"></i></div>
+      <div>
+        <div class="callout-title">DID YOU KNOW?</div>
+        <div class="callout-body">Session 0 has been non-interactive since Vista specifically to stop shatter-attack-style privilege escalation from services rendering UI on the user's desktop.</div>
+      </div>
+    </div>
+    <div class="callout callout-fun reveal">
+      <div class="co-icon"><i data-lucide="sparkles" class="w-4 h-4"></i></div>
+      <div>
+        <div class="callout-title">DID YOU KNOW?</div>
+        <div class="callout-body">Ctrl+Alt+Del is the Secure Attention Sequence — it's trapped by the kernel so no user-mode app, including malware, can fake the logon prompt.</div>
+      </div>
+    </div>
+    <div class="callout callout-fun reveal">
+      <div class="co-icon"><i data-lucide="sparkles" class="w-4 h-4"></i></div>
+      <div>
+        <div class="callout-title">DID YOU KNOW?</div>
+        <div class="callout-body">A Golden Ticket works because the krbtgt account's password never expires by default — its hash signs every TGT in the domain.</div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer class="border-t border-white/5 py-10">
+  <div class="max-w-[1400px] mx-auto px-5 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
+    <div>Windows Internals &amp; Security — internal training documentation. For education and authorized defensive use.</div>
+    <div class="flex gap-4">
+      <a href="pages/boot-process.html" class="hover:text-slate-300">Start reading →</a>
+    </div>
+  </div>
+</footer>
+
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+<script src="assets/js/glossary.js"></script>
+<script src="assets/js/main.js"></script>
+</body>
+</html>

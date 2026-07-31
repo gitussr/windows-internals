@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Registry & User Profiles — Windows Internals Docs</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+<link rel="stylesheet" href="../assets/css/main.css">
+<style>body{font-family:'Inter','Segoe UI',sans-serif;}</style>
+</head>
+<body data-page="registry" class="antialiased">
+<div id="tooltip-pop"></div>
+
+<header class="topbar sticky top-0 z-40">
+  <div class="max-w-[1500px] mx-auto px-5 lg:px-8 h-16 flex items-center justify-between">
+    <a href="../index.html" class="flex items-center gap-2.5">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center shadow-lg shadow-blue-500/20"><i data-lucide="shield-half" class="w-4.5 h-4.5 text-white"></i></div>
+      <div class="leading-tight"><div class="text-[13px] font-bold text-white tracking-tight">Windows Internals</div><div class="text-[10px] text-slate-400 tracking-wide">MICROSOFT ENGINEERING DOCS</div></div>
+    </a>
+    <div class="hidden lg:flex items-center gap-1 text-[13px] text-slate-400">
+      <a href="../index.html" class="hover:text-white px-2">Home</a><i data-lucide="chevron-right" class="w-3.5 h-3.5"></i><span class="text-white px-2">Registry &amp; Profiles</span>
+    </div>
+    <button id="mobile-nav-toggle" class="lg:hidden w-9 h-9 rounded-lg border border-white/10 flex items-center justify-center text-slate-300"><i data-lucide="menu" class="w-4.5 h-4.5"></i></button>
+  </div>
+  <div id="mobile-nav-panel" class="hidden lg:hidden flex-col gap-1 px-5 pb-4 text-sm"></div>
+</header>
+
+<div class="max-w-[1500px] mx-auto px-5 lg:px-8 flex gap-8 pt-8 items-start">
+  <aside class="desktop-sidebar sticky top-24 w-64 flex-none h-[calc(100vh-7rem)] overflow-y-auto sidebar pr-2">
+    <div class="text-[11px] font-bold text-slate-500 tracking-wide mb-3 px-1">DOCUMENTATION</div>
+    <nav class="space-y-1 mb-6">
+      <a href="../index.html" class="side-link" data-nav="home"><i data-lucide="home" class="w-4 h-4"></i> Home</a>
+      <a href="boot-process.html" class="side-link" data-nav="boot"><span class="num">01</span> Boot Process</a>
+      <a href="authentication.html" class="side-link" data-nav="auth"><span class="num">02</span> Authentication</a>
+      <a href="kerberos.html" class="side-link" data-nav="kerberos"><span class="num">03</span> Kerberos Deep Dive</a>
+      <a href="active-directory.html" class="side-link" data-nav="ad"><span class="num">04</span> Active Directory</a>
+      <a href="tokens-authorization.html" class="side-link" data-nav="tokens"><span class="num">05</span> Tokens &amp; Authorization</a>
+      <a href="registry-profiles.html" class="side-link" data-nav="registry"><span class="num">06</span> Registry &amp; Profiles</a>
+      <a href="event-logs.html" class="side-link" data-nav="logs"><span class="num">07</span> Event Logs</a>
+      <a href="attack-techniques.html" class="side-link" data-nav="attacks"><span class="num">08</span> Attack Techniques</a>
+      <a href="soc-playbook.html" class="side-link" data-nav="soc"><span class="num">09</span> SOC Playbook</a>
+      <a href="interview-handbook.html" class="side-link" data-nav="interview"><span class="num">10</span> Interview Handbook</a>
+    </nav>
+  </aside>
+
+  <main class="flex-1 min-w-0 pb-32">
+    <div class="reveal in mb-10">
+      <div class="section-kicker">Part 4 · Profiles &amp; Persistence</div>
+      <h1 class="text-3xl lg:text-4xl font-black tracking-tight mt-2">Registry &amp; User Profiles</h1>
+      <p class="prose-muted max-w-3xl mt-4 text-[15px]">The registry is where "who logged on" turns into "what their desktop looks like" — and it's also the single most common home for persistence, because so much of Windows' own startup behavior is registry-driven by design.</p>
+    </div>
+
+    <section id="hives" class="mb-16">
+      <h2 class="doc-h2 mb-5">Registry Hives</h2>
+      <div class="overflow-x-auto glass p-1 reveal">
+        <table class="reg-table">
+          <thead><tr><th>Hive</th><th>Backing file</th><th>Contains</th></tr></thead>
+          <tbody>
+            <tr><td><code>HKLM\SAM</code></td><td><code>%SystemRoot%\System32\config\SAM</code></td><td>Local user accounts &amp; hashes; ACL-locked even from local Administrators by default.</td></tr>
+            <tr><td><code>HKLM\SECURITY</code></td><td><code>...\config\SECURITY</code></td><td>LSA secrets, cached domain credentials, local security policy.</td></tr>
+            <tr><td><code>HKLM\SYSTEM</code></td><td><code>...\config\SYSTEM</code></td><td>Services, drivers, Control Sets, Session Manager settings — always readable, rarely writable by non-admins.</td></tr>
+            <tr><td><code>HKLM\SOFTWARE</code></td><td><code>...\config\SOFTWARE</code></td><td>Installed software, machine-wide app configuration, Winlogon/IFEO keys.</td></tr>
+            <tr><td><code>HKLM\DEFAULT</code></td><td><code>...\config\DEFAULT</code></td><td>Template hive mounted as <code>HKU\.DEFAULT</code> — the basis for any brand-new user profile.</td></tr>
+            <tr><td><code>HKCU</code></td><td><code>%USERPROFILE%\<span class="term" data-term="NTUSER.DAT">NTUSER.DAT</span></code></td><td>The logged-on user's personal settings — mounted live at logon, unmounted (flushed to disk) at logoff.</td></tr>
+            <tr><td><code>HKCU\Software\Classes</code></td><td><code>%USERPROFILE%\AppData\Local\Microsoft\Windows\UsrClass.dat</code></td><td>Per-user COM/shell registrations — a favorite target for COM hijacking because it's user-writable.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="profile-loading" class="mb-16">
+      <h2 class="doc-h2 mb-5">Profile Loading &amp; Shell Initialization</h2>
+      <div class="diagram-frame reveal mb-6">
+        <div class="mermaid">
+graph LR
+  A[Token created] --> B["profapi.dll: LoadUserProfileW<br/>mounts NTUSER.DAT as HKCU"]
+  B --> C["userenv.dll: apply Group Policy,<br/>build environment block"]
+  C --> D["winlogon.exe launches<br/>userinit.exe"]
+  D --> E["userinit.exe reads<br/>Winlogon!Shell"]
+  E --> F["explorer.exe starts,<br/>userinit.exe exits"]
+  F --> G["Explorer reads Run/RunOnce,<br/>Startup folder"]
+        </div>
+      </div>
+      <div class="grid md:grid-cols-2 gap-5">
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">Environment Variables</h3><p class="prose-muted text-sm">Built by <code>userenv.dll</code> from system + user + Group Policy sources (<code>HKLM\SYSTEM\...\Environment</code> and <code>HKCU\Environment</code>) into the process environment block every child process inherits.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">userinit.exe → explorer.exe</h3><p class="prose-muted text-sm">Userinit reads <code>Winlogon!Userinit</code> to know it's itself, then reads <code>Winlogon!Shell</code> to know what to launch (normally <code>explorer.exe</code>), then exits — it does not stay resident.</p></div>
+      </div>
+    </section>
+
+    <section id="autostart" class="mb-16">
+      <h2 class="doc-h2 mb-2">Shell Registry Keys &amp; Autostart Locations</h2>
+      <p class="prose-muted text-sm mb-6 max-w-3xl">These are the highest-frequency persistence locations on Windows — largely because they're legitimate, documented startup mechanisms that malware simply reuses.</p>
+      <div class="overflow-x-auto glass p-1 reveal">
+        <table class="reg-table">
+          <thead><tr><th>Location</th><th>Behavior</th></tr></thead>
+          <tbody>
+            <tr><td><code>HKLM/HKCU\...\Winlogon!Shell</code></td><td>What Winlogon launches as the shell — default <code>explorer.exe</code>.</td></tr>
+            <tr><td><code>HKLM\...\Winlogon!Userinit</code></td><td>What runs before the shell — default <code>userinit.exe,</code> (trailing comma matters; extra entries after it all run).</td></tr>
+            <tr><td><code>HKLM/HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code></td><td>Runs every logon, indefinitely, for that hive's scope (machine-wide or per-user).</td></tr>
+            <tr><td><code>...\RunOnce</code></td><td>Runs once, then the value is deleted — used legitimately by installers, abused for single-shot staged payloads.</td></tr>
+            <tr><td>Startup folder<br/><code>%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup</code></td><td>Anything here launches at logon — no registry edit needed at all.</td></tr>
+            <tr><td><span class="term" data-term="IFEO">Image File Execution Options</span><br/><code>HKLM\...\IFEO\notepad.exe!Debugger</code></td><td>Silently redirects execution of the named binary to the "debugger" instead — a stealthy hijack, not just a startup hook.</td></tr>
+            <tr><td>Scheduled Tasks<br/><code>C:\Windows\System32\Tasks</code></td><td>XML task definitions that can run as SYSTEM on a trigger (logon, time, event) — see Event ID 4698.</td></tr>
+            <tr><td>Services<br/><code>HKLM\SYSTEM\CurrentControlSet\Services</code></td><td>Auto-start services run as SYSTEM before any user logs on at all — see Event ID 7045.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="persistence" class="mb-16">
+      <h2 class="doc-h2 mb-5">Persistence Mechanisms — Blue Team Summary</h2>
+      <div class="callout callout-blue reveal">
+        <div class="co-icon"><i data-lucide="shield" class="w-4 h-4"></i></div>
+        <div><div class="callout-title">BLUE TEAM NOTE</div><div class="callout-body">None of the mechanisms above are inherently malicious — they're all legitimate OS features. Detection is about <b>baseline deviation</b>: know what Run keys, services, and scheduled tasks are supposed to exist on a given machine, and alert on anything new, unsigned, or pointing outside <code>Program Files</code>/<code>System32</code>.</div></div>
+      </div>
+    </section>
+
+    <div class="callout callout-fun reveal">
+      <div class="co-icon"><i data-lucide="sparkles" class="w-4 h-4"></i></div>
+      <div><div class="callout-title">DID YOU KNOW?</div><div class="callout-body">If Windows can't load a user's NTUSER.DAT (corruption, locked file, roaming profile server unreachable), it silently falls back to a <b>temporary profile</b> built from the DEFAULT hive — settings vanish on logoff, which is a classic "why did my settings reset?!" support ticket.</div></div>
+    </div>
+
+  </main>
+
+  <aside class="hidden xl:block w-56 flex-none sticky top-24 h-[calc(100vh-7rem)] overflow-y-auto">
+    <div class="text-[11px] font-bold text-slate-500 tracking-wide mb-3">ON THIS PAGE</div>
+    <nav class="space-y-0.5">
+      <a href="#hives" class="toc-link">Registry Hives</a>
+      <a href="#profile-loading" class="toc-link">Profile Loading</a>
+      <a href="#autostart" class="toc-link">Autostart Locations</a>
+      <a href="#persistence" class="toc-link">Persistence Summary</a>
+    </nav>
+    <div class="mt-8 glass p-4">
+      <div class="text-xs font-bold text-slate-300 mb-2 flex items-center gap-1.5"><i data-lucide="arrow-right-circle" class="w-3.5 h-3.5 text-blue-400"></i> Next up</div>
+      <a href="event-logs.html" class="text-sm text-cyan-300 hover:underline">Windows Event Logs →</a>
+    </div>
+  </aside>
+</div>
+
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/main.js"></script>
+</body>
+</html>

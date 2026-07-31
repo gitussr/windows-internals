@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Windows Event Logs — Windows Internals Docs</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+<link rel="stylesheet" href="../assets/css/main.css">
+<style>body{font-family:'Inter','Segoe UI',sans-serif;}</style>
+</head>
+<body data-page="logs" class="antialiased">
+<div id="tooltip-pop"></div>
+
+<header class="topbar sticky top-0 z-40">
+  <div class="max-w-[1500px] mx-auto px-5 lg:px-8 h-16 flex items-center justify-between">
+    <a href="../index.html" class="flex items-center gap-2.5">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center shadow-lg shadow-blue-500/20"><i data-lucide="shield-half" class="w-4.5 h-4.5 text-white"></i></div>
+      <div class="leading-tight"><div class="text-[13px] font-bold text-white tracking-tight">Windows Internals</div><div class="text-[10px] text-slate-400 tracking-wide">MICROSOFT ENGINEERING DOCS</div></div>
+    </a>
+    <div class="hidden lg:flex items-center gap-1 text-[13px] text-slate-400">
+      <a href="../index.html" class="hover:text-white px-2">Home</a><i data-lucide="chevron-right" class="w-3.5 h-3.5"></i><span class="text-white px-2">Windows Event Logs</span>
+    </div>
+    <button id="mobile-nav-toggle" class="lg:hidden w-9 h-9 rounded-lg border border-white/10 flex items-center justify-center text-slate-300"><i data-lucide="menu" class="w-4.5 h-4.5"></i></button>
+  </div>
+  <div id="mobile-nav-panel" class="hidden lg:hidden flex-col gap-1 px-5 pb-4 text-sm"></div>
+</header>
+
+<div class="max-w-[1500px] mx-auto px-5 lg:px-8 flex gap-8 pt-8 items-start">
+  <aside class="desktop-sidebar sticky top-24 w-64 flex-none h-[calc(100vh-7rem)] overflow-y-auto sidebar pr-2">
+    <div class="text-[11px] font-bold text-slate-500 tracking-wide mb-3 px-1">DOCUMENTATION</div>
+    <nav class="space-y-1 mb-6">
+      <a href="../index.html" class="side-link" data-nav="home"><i data-lucide="home" class="w-4 h-4"></i> Home</a>
+      <a href="boot-process.html" class="side-link" data-nav="boot"><span class="num">01</span> Boot Process</a>
+      <a href="authentication.html" class="side-link" data-nav="auth"><span class="num">02</span> Authentication</a>
+      <a href="kerberos.html" class="side-link" data-nav="kerberos"><span class="num">03</span> Kerberos Deep Dive</a>
+      <a href="active-directory.html" class="side-link" data-nav="ad"><span class="num">04</span> Active Directory</a>
+      <a href="tokens-authorization.html" class="side-link" data-nav="tokens"><span class="num">05</span> Tokens &amp; Authorization</a>
+      <a href="registry-profiles.html" class="side-link" data-nav="registry"><span class="num">06</span> Registry &amp; Profiles</a>
+      <a href="event-logs.html" class="side-link" data-nav="logs"><span class="num">07</span> Event Logs</a>
+      <a href="attack-techniques.html" class="side-link" data-nav="attacks"><span class="num">08</span> Attack Techniques</a>
+      <a href="soc-playbook.html" class="side-link" data-nav="soc"><span class="num">09</span> SOC Playbook</a>
+      <a href="interview-handbook.html" class="side-link" data-nav="interview"><span class="num">10</span> Interview Handbook</a>
+    </nav>
+  </aside>
+
+  <main class="flex-1 min-w-0 pb-32">
+    <div class="reveal in mb-10">
+      <div class="section-kicker">Detection Foundations</div>
+      <h1 class="text-3xl lg:text-4xl font-black tracking-tight mt-2">Windows Event Logs</h1>
+      <p class="prose-muted max-w-3xl mt-4 text-[15px]">Every technique on the previous pages leaves a trace somewhere in these logs. Knowing the event IDs cold is what separates "I read about Kerberoasting" from "I can find it in a SIEM at 3am."</p>
+    </div>
+
+    <section id="log-sources" class="mb-16">
+      <h2 class="doc-h2 mb-5">Log Sources</h2>
+      <div class="grid md:grid-cols-2 gap-5">
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">Security.evtx</h3><p class="prose-muted text-sm">The primary authentication/authorization/audit log — logon/logoff, object access, privilege use, account management. Requires an explicit audit policy (Local Security Policy or GPO) to populate most of the interesting IDs.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">System.evtx</h3><p class="prose-muted text-sm">Driver/service/kernel-level events — service installs (7045), boot events, driver failures. Populated regardless of audit policy, which is exactly why 7045 lives here.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">Application.evtx</h3><p class="prose-muted text-sm">Application-level errors, warnings, and info events — .NET crash dumps, MSI installer logs, application-specific auditing.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">PowerShell Logs</h3><p class="prose-muted text-sm"><code>Microsoft-Windows-PowerShell/Operational</code> — Script Block Logging (4104) captures the full de-obfuscated script text; Module Logging (4103) records pipeline execution details. The single richest log source for fileless attack investigation.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1"><span class="term" data-term="Sysmon">Sysmon</span> Logs</h3><p class="prose-muted text-sm"><code>Microsoft-Windows-Sysmon/Operational</code> — process creation with full command line and hashes (Event ID 1), network connections (3), process access (10, the LSASS-dumping detector), registry modification (13), and much more that native Windows logging doesn't provide out of the box.</p></div>
+        <div class="glass p-5 reveal"><h3 class="doc-h3 text-base mb-1">Windows Defender Logs</h3><p class="prose-muted text-sm"><code>Microsoft-Windows-Windows Defender/Operational</code> — detections (1116/1117), Attack Surface Reduction rule blocks (1121), and Controlled Folder Access events, all correlatable with Sysmon/Security log entries for the same timestamp.</p></div>
+      </div>
+    </section>
+
+    <section id="event-ids" class="mb-16">
+      <h2 class="doc-h2 mb-2">Event IDs Every Analyst Must Know</h2>
+      <p class="prose-muted text-sm mb-6 max-w-3xl">All from Security.evtx unless noted. Logon Type in 4624/4625/4776 tells you <i>how</i> — 2=Interactive, 3=Network, 4=Batch, 5=Service, 7=Unlock, 8=NetworkCleartext, 9=NewCredentials, 10=RemoteInteractive (RDP), 11=CachedInteractive.</p>
+      <div class="overflow-x-auto glass p-1 reveal">
+        <table class="reg-table">
+          <thead><tr><th>Event ID</th><th>Name</th><th>What it means</th></tr></thead>
+          <tbody>
+            <tr><td class="font-mono text-cyan-300">4624</td><td>Account logged on</td><td>A logon succeeded. Check the Logon Type — a 4624 with Logon Type 3 (Network) from an unfamiliar host is classic lateral movement.</td></tr>
+            <tr><td class="font-mono text-cyan-300">4625</td><td>Account failed to log on</td><td>A logon attempt failed. High volume from one source = brute force / password spray; check the Failure Reason substatus.</td></tr>
+            <tr><td class="font-mono text-cyan-300">4648</td><td>Logon attempted using explicit credentials</td><td>A process explicitly supplied different credentials than its own token (e.g. <code>runas</code>, <code>net use /user:</code>) — a strong lateral-movement / credential-testing signal.</td></tr>
+            <tr><td class="font-mono text-cyan-300">4672</td><td>Special privileges assigned to new logon</td><td>The new logon's token includes sensitive privileges (e.g. <code>SeDebugPrivilege</code>, <code>SeTcbPrivilege</code>) — effectively "an admin-equivalent account just logged on."</td></tr>
+            <tr><td class="font-mono text-cyan-300">4688</td><td>A new process has been created</td><td>Process creation — with <code>ProcessCommandLine</code> auditing enabled, this is your process-tree backbone for investigation.</td></tr>
+            <tr><td class="font-mono text-cyan-300">4697</td><td>A service was installed (Security log)</td><td>Same event as 7045 below, but logged to Security.evtx — requires the "Audit Security System Extension"/service-install audit subcategory enabled.</td></tr>
+            <tr><td class="font-mono text-cyan-300">4698</td><td>A scheduled task was created</td><td>Includes the full task XML in the event — inspect the <code>&lt;Actions&gt;</code> block for the real payload.</td></tr>
+            <tr><td class="font-mono text-cyan-300">4720</td><td>A user account was created</td><td>New local or domain account — correlate with who created it (SubjectUserName) and when, immediately after other suspicious activity.</td></tr>
+            <tr><td class="font-mono text-cyan-300">4728</td><td>Member added to a security-enabled global group</td><td>E.g. added to "Domain Admins" — one of the highest-signal privilege-escalation events in AD.</td></tr>
+            <tr><td class="font-mono text-cyan-300">4732</td><td>Member added to a security-enabled local group</td><td>E.g. added to the local "Administrators" group on a single machine.</td></tr>
+            <tr><td class="font-mono text-cyan-300">4768</td><td>A Kerberos TGT was requested (AS-REQ)</td><td>Logged on the DC. The encryption type field flags weak crypto (RC4, <code>0x17</code>); a flood of these from one source is an AS-REP Roasting or brute-force indicator.</td></tr>
+            <tr><td class="font-mono text-cyan-300">4769</td><td>A Kerberos service ticket was requested (TGS-REQ)</td><td>Logged on the DC. A burst of these for many different SPNs from one account, especially with RC4 encryption, is the signature of Kerberoasting.</td></tr>
+            <tr><td class="font-mono text-cyan-300">4771</td><td>Kerberos pre-authentication failed</td><td>Similar to 4625 but Kerberos-specific — repeated failures against one account signal a targeted password guess or AS-REP roasting probe.</td></tr>
+            <tr><td class="font-mono text-cyan-300">4776</td><td>DC attempted to validate credentials (NTLM)</td><td>Logged when NTLM (not Kerberos) is used to authenticate against a DC — useful for finding legacy NTLM usage and NTLM relay targets.</td></tr>
+            <tr><td class="font-mono text-cyan-300">7045</td><td>A service was installed (System log)</td><td>Always logged, no audit policy required — the single most reliable native signal for new-service persistence, including PsExec-style lateral movement.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="callout callout-fun reveal">
+      <div class="co-icon"><i data-lucide="sparkles" class="w-4 h-4"></i></div>
+      <div><div class="callout-title">DID YOU KNOW?</div><div class="callout-body">Event ID 4769 is logged for <i>every</i> Kerberos service ticket request — including totally normal ones. Kerberoasting detection isn't "alert on 4769," it's "alert on an abnormal <i>volume</i> or <i>pattern</i> of 4769s using weak encryption."</div></div>
+    </div>
+
+  </main>
+
+  <aside class="hidden xl:block w-56 flex-none sticky top-24 h-[calc(100vh-7rem)] overflow-y-auto">
+    <div class="text-[11px] font-bold text-slate-500 tracking-wide mb-3">ON THIS PAGE</div>
+    <nav class="space-y-0.5">
+      <a href="#log-sources" class="toc-link">Log Sources</a>
+      <a href="#event-ids" class="toc-link">Event IDs</a>
+    </nav>
+    <div class="mt-8 glass p-4">
+      <div class="text-xs font-bold text-slate-300 mb-2 flex items-center gap-1.5"><i data-lucide="arrow-right-circle" class="w-3.5 h-3.5 text-blue-400"></i> Next up</div>
+      <a href="attack-techniques.html" class="text-sm text-cyan-300 hover:underline">Windows Attack Techniques →</a>
+    </div>
+  </aside>
+</div>
+
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/main.js"></script>
+</body>
+</html>

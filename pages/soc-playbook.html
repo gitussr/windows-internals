@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SOC Analyst Playbook — Windows Internals Docs</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+<link rel="stylesheet" href="../assets/css/main.css">
+<style>body{font-family:'Inter','Segoe UI',sans-serif;}</style>
+</head>
+<body data-page="soc" class="antialiased">
+<div id="tooltip-pop"></div>
+
+<header class="topbar sticky top-0 z-40">
+  <div class="max-w-[1500px] mx-auto px-5 lg:px-8 h-16 flex items-center justify-between">
+    <a href="../index.html" class="flex items-center gap-2.5">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center shadow-lg shadow-blue-500/20"><i data-lucide="shield-half" class="w-4.5 h-4.5 text-white"></i></div>
+      <div class="leading-tight"><div class="text-[13px] font-bold text-white tracking-tight">Windows Internals</div><div class="text-[10px] text-slate-400 tracking-wide">MICROSOFT ENGINEERING DOCS</div></div>
+    </a>
+    <div class="hidden lg:flex items-center gap-1 text-[13px] text-slate-400">
+      <a href="../index.html" class="hover:text-white px-2">Home</a><i data-lucide="chevron-right" class="w-3.5 h-3.5"></i><span class="text-white px-2">SOC Playbook</span>
+    </div>
+    <button id="mobile-nav-toggle" class="lg:hidden w-9 h-9 rounded-lg border border-white/10 flex items-center justify-center text-slate-300"><i data-lucide="menu" class="w-4.5 h-4.5"></i></button>
+  </div>
+  <div id="mobile-nav-panel" class="hidden lg:hidden flex-col gap-1 px-5 pb-4 text-sm"></div>
+</header>
+
+<div class="max-w-[1500px] mx-auto px-5 lg:px-8 flex gap-8 pt-8 items-start">
+  <aside class="desktop-sidebar sticky top-24 w-64 flex-none h-[calc(100vh-7rem)] overflow-y-auto sidebar pr-2">
+    <div class="text-[11px] font-bold text-slate-500 tracking-wide mb-3 px-1">DOCUMENTATION</div>
+    <nav class="space-y-1 mb-6">
+      <a href="../index.html" class="side-link" data-nav="home"><i data-lucide="home" class="w-4 h-4"></i> Home</a>
+      <a href="boot-process.html" class="side-link" data-nav="boot"><span class="num">01</span> Boot Process</a>
+      <a href="authentication.html" class="side-link" data-nav="auth"><span class="num">02</span> Authentication</a>
+      <a href="kerberos.html" class="side-link" data-nav="kerberos"><span class="num">03</span> Kerberos Deep Dive</a>
+      <a href="active-directory.html" class="side-link" data-nav="ad"><span class="num">04</span> Active Directory</a>
+      <a href="tokens-authorization.html" class="side-link" data-nav="tokens"><span class="num">05</span> Tokens &amp; Authorization</a>
+      <a href="registry-profiles.html" class="side-link" data-nav="registry"><span class="num">06</span> Registry &amp; Profiles</a>
+      <a href="event-logs.html" class="side-link" data-nav="logs"><span class="num">07</span> Event Logs</a>
+      <a href="attack-techniques.html" class="side-link" data-nav="attacks"><span class="num">08</span> Attack Techniques</a>
+      <a href="soc-playbook.html" class="side-link" data-nav="soc"><span class="num">09</span> SOC Playbook</a>
+      <a href="interview-handbook.html" class="side-link" data-nav="interview"><span class="num">10</span> Interview Handbook</a>
+    </nav>
+  </aside>
+
+  <main class="flex-1 min-w-0 pb-32">
+    <div class="reveal in mb-10">
+      <div class="section-kicker">Blue Team · Defensive Operations</div>
+      <h1 class="text-3xl lg:text-4xl font-black tracking-tight mt-2">SOC Analyst Playbook</h1>
+      <p class="prose-muted max-w-3xl mt-4 text-[15px]">Every attack technique on the previous page maps to a detection, an investigation procedure, and a mitigation. This page is the response side of that equation — Sigma rules, YARA signatures, Sysmon config, and where each finding lands in Defender and Sentinel.</p>
+    </div>
+
+    <section id="triage-flow" class="mb-16">
+      <h2 class="doc-h2 mb-5">Alert Triage Workflow</h2>
+      <div class="diagram-frame reveal">
+        <div class="mermaid">
+graph LR
+  A[Alert Fires<br/>Sentinel / Defender / SIEM] --> B[Triage<br/>true positive?]
+  B -->|False positive| Z[Tune rule<br/>close alert]
+  B -->|True positive| C[Scope<br/>host, account, timeframe]
+  C --> D[Investigate<br/>4624/4688/Sysmon/PowerShell logs]
+  D --> E[Contain<br/>isolate host, disable account, revoke tokens]
+  E --> F[Eradicate<br/>kill process, remove persistence]
+  F --> G[Recover &amp; Report<br/>reset creds, rotate krbtgt if Golden Ticket]
+        </div>
+      </div>
+      <div class="callout callout-blue mt-4 reveal">
+        <div class="co-icon"><i data-lucide="shield-check" class="w-4 h-4"></i></div>
+        <div><div class="callout-title">BLUE TEAM NOTE</div><div class="callout-body">Scope before you contain. Isolating a single host in a lateral-movement chain just tells the attacker to pivot from a different one — pull the account's full logon history (4624/4648) across <i>all</i> hosts before you act.</div></div>
+      </div>
+    </section>
+
+    <section id="detection-matrix" class="mb-16">
+      <h2 class="doc-h2 mb-2">Detection Matrix</h2>
+      <p class="prose-muted text-sm mb-6 max-w-3xl">One row per technique from the <a href="attack-techniques.html" class="text-cyan-300 underline">Attack Techniques</a> page — what to watch, how to confirm, how to stop it.</p>
+      <div class="overflow-x-auto glass p-1 reveal">
+        <table class="reg-table">
+          <thead><tr><th>Technique</th><th>Detection</th><th>Investigation</th><th>Mitigation</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="font-semibold text-slate-200">LSASS Dumping</td>
+              <td>Sysmon EID 10 (ProcessAccess) targeting <code>lsass.exe</code> with <code>GrantedAccess</code> 0x1010/0x1410/0x1438; Defender ASR rule "Block credential stealing from LSASS."</td>
+              <td>Identify the source process and its parent; check for <code>comsvcs.dll</code> rundll32 MiniDump invocation in 4688 command lines.</td>
+              <td>Enable <span class="term" data-term="LSA Protection">LSA Protection</span> (RunAsPPL) and <span class="term" data-term="Credential Guard">Credential Guard</span>; restrict debug privilege.</td>
+            </tr>
+            <tr>
+              <td class="font-semibold text-slate-200"><span class="term" data-term="Kerberoasting">Kerberoasting</span></td>
+              <td>4769 burst for many SPNs from one account, RC4 (<code>0x17</code>) encryption type, short time window.</td>
+              <td>Pivot on the requesting account (<code>TargetUserName</code>); check whether that account normally accesses those SPNs.</td>
+              <td>AES-only service accounts, <span class="term" data-term="gMSA">gMSA</span>/managed service accounts, long random passwords.</td>
+            </tr>
+            <tr>
+              <td class="font-semibold text-slate-200"><span class="term" data-term="Golden Ticket">Golden Ticket</span></td>
+              <td>4768/4769 with anomalous encryption or an account that "logged on" without a corresponding 4624; ticket lifetime exceeding domain policy.</td>
+              <td>Correlate the SID in the PAC against a disabled or nonexistent account — Golden Tickets can forge SIDs for accounts that no longer exist.</td>
+              <td>Rotate the <code>krbtgt</code> password twice (back-to-back), monitor with Microsoft Defender for Identity.</td>
+            </tr>
+            <tr>
+              <td class="font-semibold text-slate-200"><span class="term" data-term="Pass the Hash">Pass the Hash</span> / <span class="term" data-term="NTLM Relay">NTLM Relay</span></td>
+              <td>4624 Logon Type 3 with NTLM, no matching interactive logon; 4776 spikes from a single relay source.</td>
+              <td>Check <code>LmPackageName</code>/<code>AuthenticationPackageName</code> in 4624; correlate source IP against known workstation inventory.</td>
+              <td>Disable NTLMv1, enable SMB/LDAP signing and Extended Protection for Authentication (EPA), restrict NTLM domain-wide via GPO.</td>
+            </tr>
+            <tr>
+              <td class="font-semibold text-slate-200">Service Abuse</td>
+              <td>7045 (new service) with an unsigned or LOLBin binary path; 4697 for security-audited installs.</td>
+              <td>Pull <code>ImagePath</code> from the event, check signature and prevalence; correlate with the installing account's 4688.</td>
+              <td>Least-privilege service accounts, restrict who can write to <code>HKLM\SYSTEM\CurrentControlSet\Services</code>.</td>
+            </tr>
+            <tr>
+              <td class="font-semibold text-slate-200">Registry Persistence</td>
+              <td>Sysmon EID 13 (RegistryEvent) on Run/RunOnce, Winlogon <code>Shell</code>/<code>Userinit</code>, or <span class="term" data-term="IFEO">IFEO</span> <code>Debugger</code> values.</td>
+              <td>Diff the value against a known-good baseline; check the writing process's parent chain.</td>
+              <td>Application control (WDAC/AppLocker), restrict write ACLs on autostart keys.</td>
+            </tr>
+            <tr>
+              <td class="font-semibold text-slate-200">Scheduled Task Abuse</td>
+              <td>4698 (task created) with a payload in <code>&lt;Actions&gt;</code>; Sysmon EID 1 for <code>schtasks.exe</code>/<code>taskeng.exe</code> children.</td>
+              <td>Inspect the task XML for the command line and trigger; check "Run whether user is logged on or not" + SYSTEM context.</td>
+              <td>Restrict <code>SeCreateGlobalPrivilege</code>, audit Task Scheduler operational log.</td>
+            </tr>
+            <tr>
+              <td class="font-semibold text-slate-200">WMI Abuse</td>
+              <td>Sysmon EID 19/20/21 (WmiEvent) for filter/consumer/binding creation; 4688 for <code>wmic process call create</code>.</td>
+              <td>Enumerate <code>__EventFilter</code>/<code>CommandLineEventConsumer</code> in the WMI repository (<code>OBJECTS.DATA</code>).</td>
+              <td>WMI namespace ACLs, disable remote WMI where unneeded, monitor with Sysmon WMI events.</td>
+            </tr>
+            <tr>
+              <td class="font-semibold text-slate-200">PowerShell Abuse</td>
+              <td>4104 Script Block Logging capturing de-obfuscated content; suspicious <code>-EncodedCommand</code>/<code>IEX</code>/<code>DownloadString</code> patterns.</td>
+              <td>Read the full de-obfuscated block from 4104, not just the 4688 command line (which is often truncated/obfuscated).</td>
+              <td>Constrained Language Mode, AMSI, PowerShell v2 removal (no logging support), Script Block Logging enabled by GPO.</td>
+            </tr>
+            <tr>
+              <td class="font-semibold text-slate-200">DLL Search Order Hijack</td>
+              <td>Sysmon EID 7 (ImageLoad) for a DLL loading from an unexpected/writable directory; unsigned DLL with the name of a system DLL.</td>
+              <td>Compare load path against the expected system directory; check file creation time vs. host binary.</td>
+              <td>WDAC/AppLocker DLL rules, avoid running from user-writable directories, keep systems patched (many are fixed at the app level).</td>
+            </tr>
+            <tr>
+              <td class="font-semibold text-slate-200">COM Hijacking</td>
+              <td>Sysmon EID 13 on <code>HKCU\Software\Classes\CLSID\{GUID}\InprocServer32</code>.</td>
+              <td>Resolve the CLSID to its legitimate component; check whether the new DLL path is expected.</td>
+              <td>Monitor <code>UsrClass.dat</code>-backed CLSID keys, application allow-listing.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="sigma" class="mb-16">
+      <h2 class="doc-h2 mb-5">Sigma Rules</h2>
+      <p class="prose-muted text-sm mb-4 max-w-3xl">Sigma is a generic, SIEM-agnostic signature format — write once, convert (via <code>sigma-cli</code>/pySigma) to Sentinel KQL, Splunk SPL, or Elastic EQL.</p>
+      <div class="code-chip"><span>sigma / lsass_access.yml</span><span class="flex items-center gap-1"><i data-lucide="file-code-2" class="w-3.5 h-3.5"></i> YAML</span></div>
+      <pre class="language-yaml"><code>title: Suspicious Access To LSASS Process
+id: 0a1b2c3d-4e5f-6789-abcd-ef0123456789
+status: stable
+logsource:
+  category: process_access
+  product: windows
+detection:
+  selection:
+    TargetImage|endswith: '\lsass.exe'
+    GrantedAccess:
+      - '0x1010'
+      - '0x1410'
+      - '0x1438'
+      - '0x143a'
+      - '0x1fffff'
+  filter_known_tools:
+    SourceImage|endswith:
+      - '\MsMpEng.exe'
+      - '\werfault.exe'
+  condition: selection and not filter_known_tools
+falsepositives:
+  - Legitimate EDR/AV/crash-dump tooling
+level: high</code></pre>
+
+      <div class="code-chip mt-6"><span>sigma / kerberoasting_burst.yml</span><span class="flex items-center gap-1"><i data-lucide="file-code-2" class="w-3.5 h-3.5"></i> YAML</span></div>
+      <pre class="language-yaml"><code>title: Possible Kerberoasting via RC4 TGS Requests
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4769
+    TicketEncryptionType: '0x17'
+  filter:
+    ServiceName: 'krbtgt'
+  timeframe: 5m
+  condition: selection and not filter | count(ServiceName) by TargetUserName > 5
+level: high</code></pre>
+    </section>
+
+    <section id="yara" class="mb-16">
+      <h2 class="doc-h2 mb-5">YARA Rules</h2>
+      <p class="prose-muted text-sm mb-4 max-w-3xl">YARA matches on file/memory content — useful for identifying known offensive tooling (Mimikatz, Rubeus) on disk or in a memory dump.</p>
+      <div class="code-chip"><span>yara / mimikatz_strings.yar</span><span class="flex items-center gap-1"><i data-lucide="file-code-2" class="w-3.5 h-3.5"></i> YARA</span></div>
+      <pre class="language-yaml"><code>rule Mimikatz_Generic_Strings
+{
+    meta:
+        description = "Detects common Mimikatz module/string artifacts"
+        reference = "Public tooling signature - defensive use"
+    strings:
+        $s1 = "sekurlsa::logonpasswords" ascii wide
+        $s2 = "kerberos::golden" ascii wide
+        $s3 = "lsadump::dcsync" ascii wide
+        $s4 = "privilege::debug" ascii wide
+        $mz = { 4D 5A }
+    condition:
+        $mz at 0 and 2 of ($s1,$s2,$s3,$s4)
+}</code></pre>
+    </section>
+
+    <section id="tooling" class="mb-16">
+      <h2 class="doc-h2 mb-5">Platform Coverage</h2>
+      <div class="grid md:grid-cols-3 gap-5">
+        <div class="glass p-5 reveal">
+          <div class="w-9 h-9 rounded-lg bg-emerald-500/15 flex items-center justify-center mb-3"><i data-lucide="radar" class="w-4.5 h-4.5 text-emerald-400"></i></div>
+          <h3 class="doc-h3 text-base mb-1"><span class="term" data-term="Sysmon">Sysmon</span></h3>
+          <p class="prose-muted text-sm">The visibility layer native Windows logging doesn't provide: full command lines with hashes (EID 1), network connections (3), image loads (7), process access (10), registry (13), WMI (19-21), pipes (17/18). Deploy with the <a href="#" class="text-cyan-300 underline">SwiftOnSecurity</a>-style baseline config and tune from there.</p>
+        </div>
+        <div class="glass p-5 reveal">
+          <div class="w-9 h-9 rounded-lg bg-blue-500/15 flex items-center justify-center mb-3"><i data-lucide="shield" class="w-4.5 h-4.5 text-blue-400"></i></div>
+          <h3 class="doc-h3 text-base mb-1">Microsoft Defender</h3>
+          <p class="prose-muted text-sm">Attack Surface Reduction (ASR) rules block whole technique classes pre-emptively (LSASS credential theft, Office child-process spawning). Defender for Endpoint's timeline correlates process, network, and file events per device automatically.</p>
+        </div>
+        <div class="glass p-5 reveal">
+          <div class="w-9 h-9 rounded-lg bg-cyan-500/15 flex items-center justify-center mb-3"><i data-lucide="database" class="w-4.5 h-4.5 text-cyan-400"></i></div>
+          <h3 class="doc-h3 text-base mb-1">Microsoft Sentinel</h3>
+          <p class="prose-muted text-sm">Central KQL-driven SIEM/SOAR. Analytics rules (often Sigma-converted) fire incidents; playbooks (Logic Apps) can auto-isolate a host or disable an account. <code>IdentityLogonEvents</code> and <code>SecurityEvent</code> tables are the Kerberos/NTLM workhorses.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="kql" class="mb-16">
+      <h2 class="doc-h2 mb-5">Sample Sentinel KQL Hunt</h2>
+      <div class="code-chip"><span>sentinel / kerberoasting-hunt.kql</span><span class="flex items-center gap-1"><i data-lucide="terminal" class="w-3.5 h-3.5"></i> KQL</span></div>
+      <pre class="language-sql"><code>SecurityEvent
+| where EventID == 4769
+| where TicketEncryptionType == "0x17"
+| where ServiceName != "krbtgt"
+| summarize RequestCount = count(), Services = make_set(ServiceName)
+    by TargetUserName, bin(TimeGenerated, 5m)
+| where RequestCount > 5
+| order by RequestCount desc</code></pre>
+    </section>
+
+    <div class="callout callout-fun reveal">
+      <div class="co-icon"><i data-lucide="sparkles" class="w-4 h-4"></i></div>
+      <div><div class="callout-title">DID YOU KNOW?</div><div class="callout-body">A double <code>krbtgt</code> password reset is required to fully evict a Golden Ticket forger — resetting once still leaves the previous password (and any ticket signed with it, within its lifetime) valid, because AD keeps the last two passwords active for compatibility.</div></div>
+    </div>
+
+  </main>
+
+  <aside class="hidden xl:block w-56 flex-none sticky top-24 h-[calc(100vh-7rem)] overflow-y-auto">
+    <div class="text-[11px] font-bold text-slate-500 tracking-wide mb-3">ON THIS PAGE</div>
+    <nav class="space-y-0.5">
+      <a href="#triage-flow" class="toc-link">Triage Workflow</a>
+      <a href="#detection-matrix" class="toc-link">Detection Matrix</a>
+      <a href="#sigma" class="toc-link">Sigma Rules</a>
+      <a href="#yara" class="toc-link">YARA Rules</a>
+      <a href="#tooling" class="toc-link">Platform Coverage</a>
+      <a href="#kql" class="toc-link">Sentinel KQL</a>
+    </nav>
+    <div class="mt-8 glass p-4">
+      <div class="text-xs font-bold text-slate-300 mb-2 flex items-center gap-1.5"><i data-lucide="arrow-right-circle" class="w-3.5 h-3.5 text-blue-400"></i> Next up</div>
+      <a href="interview-handbook.html" class="text-sm text-cyan-300 hover:underline">Windows Interview Handbook →</a>
+    </div>
+  </aside>
+</div>
+
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/main.js"></script>
+</body>
+</html>

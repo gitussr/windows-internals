@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Windows Boot Process — Windows Internals Docs</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+<link rel="stylesheet" href="../assets/css/main.css">
+<style>body{font-family:'Inter','Segoe UI',sans-serif;}</style>
+</head>
+<body data-page="boot" class="antialiased">
+<div id="tooltip-pop"></div>
+
+<header class="topbar sticky top-0 z-40">
+  <div class="max-w-[1500px] mx-auto px-5 lg:px-8 h-16 flex items-center justify-between">
+    <a href="../index.html" class="flex items-center gap-2.5">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center shadow-lg shadow-blue-500/20">
+        <i data-lucide="shield-half" class="w-4.5 h-4.5 text-white"></i>
+      </div>
+      <div class="leading-tight">
+        <div class="text-[13px] font-bold text-white tracking-tight">Windows Internals</div>
+        <div class="text-[10px] text-slate-400 tracking-wide">MICROSOFT ENGINEERING DOCS</div>
+      </div>
+    </a>
+    <div class="hidden lg:flex items-center gap-1 text-[13px] text-slate-400">
+      <a href="../index.html" class="hover:text-white px-2">Home</a>
+      <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
+      <span class="text-white px-2">Windows Boot Process</span>
+    </div>
+    <button id="mobile-nav-toggle" class="lg:hidden w-9 h-9 rounded-lg border border-white/10 flex items-center justify-center text-slate-300">
+      <i data-lucide="menu" class="w-4.5 h-4.5"></i>
+    </button>
+  </div>
+  <div id="mobile-nav-panel" class="hidden lg:hidden flex-col gap-1 px-5 pb-4 text-sm"></div>
+</header>
+
+<div class="max-w-[1500px] mx-auto px-5 lg:px-8 flex gap-8 pt-8 items-start">
+
+  <!-- LEFT: sticky section nav -->
+  <aside class="desktop-sidebar sticky top-24 w-64 flex-none h-[calc(100vh-7rem)] overflow-y-auto sidebar pr-2">
+    <div class="text-[11px] font-bold text-slate-500 tracking-wide mb-3 px-1">DOCUMENTATION</div>
+    <nav class="space-y-1 mb-6">
+      <a href="../index.html" class="side-link" data-nav="home"><i data-lucide="home" class="w-4 h-4"></i> Home</a>
+      <a href="boot-process.html" class="side-link" data-nav="boot"><span class="num">01</span> Boot Process</a>
+      <a href="authentication.html" class="side-link" data-nav="auth"><span class="num">02</span> Authentication</a>
+      <a href="kerberos.html" class="side-link" data-nav="kerberos"><span class="num">03</span> Kerberos Deep Dive</a>
+      <a href="active-directory.html" class="side-link" data-nav="ad"><span class="num">04</span> Active Directory</a>
+      <a href="tokens-authorization.html" class="side-link" data-nav="tokens"><span class="num">05</span> Tokens &amp; Authorization</a>
+      <a href="registry-profiles.html" class="side-link" data-nav="registry"><span class="num">06</span> Registry &amp; Profiles</a>
+      <a href="event-logs.html" class="side-link" data-nav="logs"><span class="num">07</span> Event Logs</a>
+      <a href="attack-techniques.html" class="side-link" data-nav="attacks"><span class="num">08</span> Attack Techniques</a>
+      <a href="soc-playbook.html" class="side-link" data-nav="soc"><span class="num">09</span> SOC Playbook</a>
+      <a href="interview-handbook.html" class="side-link" data-nav="interview"><span class="num">10</span> Interview Handbook</a>
+    </nav>
+  </aside>
+
+  <!-- CENTER: content -->
+  <main class="flex-1 min-w-0 pb-32">
+
+    <div class="reveal in mb-10">
+      <div class="section-kicker">Part 1 · Boot &amp; Process Architecture</div>
+      <h1 class="text-3xl lg:text-4xl font-black tracking-tight mt-2">Windows Boot Process</h1>
+      <p class="prose-muted max-w-3xl mt-4 text-[15px]">From the moment power hits the board to the moment <code class="text-cyan-300">explorer.exe</code> paints the desktop, Windows runs a strict, layered chain of trust. Every stage exists to hand off to the next one only after verifying it's allowed to.</p>
+    </div>
+
+    <!-- Evolution -->
+    <section id="evolution" class="mb-16">
+      <h2 class="doc-h2 mb-5">Evolution of the Logon Architecture</h2>
+      <div class="glass p-6">
+        <div class="timeline">
+          <div class="timeline-item reveal">
+            <div class="timeline-dot"></div>
+            <div class="text-xs text-blue-300 font-bold mb-1">WINDOWS NT 3.1 – 4.0</div>
+            <div class="doc-h3 text-base">GINA-based logon</div>
+            <p class="prose-muted text-sm mt-1">Winlogon delegates all UI and credential collection to a single, replaceable <span class="term" data-term="Winlogon">Graphical Identification and Authentication</span> DLL (<code>msgina.dll</code>). Simple, but any third party GINA replacement fully owns the logon experience — a huge trust surface.</p>
+          </div>
+          <div class="timeline-item reveal">
+            <div class="timeline-dot"></div>
+            <div class="text-xs text-blue-300 font-bold mb-1">WINDOWS XP / 2003</div>
+            <div class="doc-h3 text-base">GINA matures, fast user switching arrives</div>
+            <p class="prose-muted text-sm mt-1">Same GINA model, now with the Welcome Screen, fast user switching (via Terminal Services sessions), and wider LSA authentication package support.</p>
+          </div>
+          <div class="timeline-item reveal">
+            <div class="timeline-dot"></div>
+            <div class="text-xs text-blue-300 font-bold mb-1">WINDOWS VISTA</div>
+            <div class="doc-h3 text-base">GINA is dead. Credential Providers arrive.</div>
+            <p class="prose-muted text-sm mt-1">GINA is replaced entirely by <b>logonui.exe</b> hosting pluggable, COM-based <span class="term" data-term="Credential Provider">Credential Providers</span>. Session 0 isolation separates services from interactive user sessions. UAC and Mandatory Integrity Control ship for the first time.</p>
+          </div>
+          <div class="timeline-item reveal">
+            <div class="timeline-dot"></div>
+            <div class="text-xs text-blue-300 font-bold mb-1">WINDOWS 10</div>
+            <div class="doc-h3 text-base">Windows Hello, Credential Guard, VBS</div>
+            <p class="prose-muted text-sm mt-1">Biometric and PIN-based Credential Providers backed by TPM-protected keys (Windows Hello for Business). <span class="term" data-term="Credential Guard">Credential Guard</span> uses Virtualization-Based Security to move NTLM hashes and Kerberos keys out of reach of the normal kernel.</p>
+          </div>
+          <div class="timeline-item reveal">
+            <div class="timeline-dot"></div>
+            <div class="text-xs text-blue-300 font-bold mb-1">WINDOWS 11</div>
+            <div class="doc-h3 text-base">TPM 2.0 mandatory, LSA protection by default</div>
+            <p class="prose-muted text-sm mt-1">TPM 2.0 and Secure Boot become hard installation requirements. LSA Protection (RunAsPPL) and Credential Guard are enabled by default on new hardware; passkeys extend Hello beyond the local device.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Secure Boot / UEFI / BIOS / TPM / BitLocker -->
+    <section id="firmware-trust" class="mb-16">
+      <h2 class="doc-h2 mb-5">The Firmware Trust Chain</h2>
+
+      <div class="grid md:grid-cols-2 gap-5 mb-6">
+        <div class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-2"><i data-lucide="cpu" class="w-4 h-4 text-blue-400"></i><h3 class="doc-h3 text-base">BIOS (Legacy)</h3></div>
+          <p class="prose-muted text-sm">16-bit real-mode firmware, MBR partitioning, no built-in signature checking. It hands off blindly to whatever code sits in the boot sector — the reason bootkits thrived for a decade.</p>
+        </div>
+        <div class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-2"><i data-lucide="chip" class="w-4 h-4 text-cyan-400"></i><h3 class="doc-h3 text-base"><span class="term" data-term="Secure Boot">UEFI</span></h3></div>
+          <p class="prose-muted text-sm">Unified Extensible Firmware Interface — a full pre-OS execution environment with GPT partitioning, network stack, and a driver model. It is what makes <b>Secure Boot</b> possible.</p>
+        </div>
+        <div class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-2"><i data-lucide="shield-check" class="w-4 h-4 text-emerald-400"></i><h3 class="doc-h3 text-base">Secure Boot</h3></div>
+          <p class="prose-muted text-sm">UEFI verifies the digital signature of <code>bootmgfw.efi</code> (Windows Boot Manager) against keys in firmware (PK/KEK/db/dbx) before executing it. An unsigned or tampered loader is refused outright.</p>
+        </div>
+        <div class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-2"><i data-lucide="lock-keyhole" class="w-4 h-4 text-violet-400"></i><h3 class="doc-h3 text-base"><span class="term" data-term="TPM">TPM</span> &amp; BitLocker</h3></div>
+          <p class="prose-muted text-sm">The TPM measures each boot stage into PCRs (Platform Configuration Registers). BitLocker seals the volume master key to those PCR values, so the drive only auto-unlocks if the measured boot chain matches — change anything upstream and it demands the recovery key.</p>
+        </div>
+      </div>
+
+      <div class="callout callout-info reveal mb-2">
+        <div class="co-icon"><i data-lucide="info" class="w-4 h-4"></i></div>
+        <div><div class="callout-title">HOW MEASURED BOOT WORKS</div>
+        <div class="callout-body">Each stage hashes the next stage's code <i>before</i> handing off control, and extends that hash into a TPM PCR. Secure Boot answers "is this signed by someone I trust?"; measured boot answers "exactly what ran, byte for byte?" — BitLocker keys off the second answer.</div></div>
+      </div>
+    </section>
+
+    <!-- Boot Manager chain -->
+    <section id="boot-manager" class="mb-16">
+      <h2 class="doc-h2 mb-5">Windows Boot Manager → Kernel</h2>
+      <div class="grid lg:grid-cols-2 gap-6">
+        <div class="space-y-4">
+          <div class="glass p-5 reveal">
+            <h3 class="doc-h3 text-base mb-1">bootmgfw.efi / bootmgr</h3>
+            <p class="prose-muted text-sm">Loaded by UEFI firmware (or the MBR/VBR chain on legacy BIOS as <code>bootmgr</code>). Its only job: read the <span class="term" data-term="BCD">Boot Configuration Data</span> store and present/select the OS entry, then launch the matching OS loader.</p>
+          </div>
+          <div class="glass p-5 reveal">
+            <h3 class="doc-h3 text-base mb-1"><span class="term" data-term="BCD">BCD</span> — Boot Configuration Data</h3>
+            <p class="prose-muted text-sm">A registry-format hive (<code>\EFI\Microsoft\Boot\BCD</code>) replacing the old <code>boot.ini</code>. Managed with <code>bcdedit.exe</code>; stores boot entries, timeout, the default OS, and Advanced Boot options (Safe Mode, debug, test-signing).</p>
+          </div>
+          <div class="glass p-5 reveal">
+            <h3 class="doc-h3 text-base mb-1">winload.efi</h3>
+            <p class="prose-muted text-sm">The OS loader. Validates its own signature, loads <code>ntoskrnl.exe</code>, <code>hal.dll</code>, the boot-start drivers listed in the registry (<code>Start=0</code>), and the SYSTEM registry hive itself — then transfers CPU control to the kernel entry point.</p>
+          </div>
+        </div>
+        <div class="space-y-4">
+          <div class="glass p-5 reveal">
+            <h3 class="doc-h3 text-base mb-1">ntoskrnl.exe + <span class="term" data-term="HAL">HAL</span></h3>
+            <p class="prose-muted text-sm">The kernel initializes the Executive subsystems (Object Manager, Memory Manager, <span class="term" data-term="SRM">Security Reference Monitor</span>, I/O Manager, Process Manager), using <code>hal.dll</code> to talk to hardware without knowing chipset specifics. It builds the first process (<b>System</b>, PID 4) and its first thread creates <code>smss.exe</code>.</p>
+          </div>
+          <div class="glass p-5 reveal">
+            <h3 class="doc-h3 text-base mb-1">Boot order at a glance</h3>
+            <ol class="prose-muted text-sm list-decimal list-inside space-y-1">
+              <li>UEFI firmware → Secure Boot signature check</li>
+              <li>bootmgfw.efi reads BCD</li>
+              <li>winload.efi loads kernel, HAL, boot drivers, SYSTEM hive</li>
+              <li>ntoskrnl.exe initializes Executive, starts <code>smss.exe</code></li>
+              <li><code>smss.exe</code> → <code>csrss.exe</code> + <code>wininit.exe</code> (session 0)</li>
+              <li><code>wininit.exe</code> → <code>services.exe</code> (SCM) + <code>lsass.exe</code></li>
+              <li><code>smss.exe</code> → <code>csrss.exe</code> + <code>winlogon.exe</code> (session 1)</li>
+              <li><code>winlogon.exe</code> → <code>logonui.exe</code> → credential providers</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+
+      <div class="diagram-frame mt-6 reveal">
+        <div class="mermaid">
+graph TD
+  A[UEFI Firmware] -->|Secure Boot signature check| B[bootmgfw.efi]
+  B -->|reads| C[(BCD Store)]
+  B --> D[winload.efi]
+  D -->|loads| E[ntoskrnl.exe + hal.dll]
+  E -->|first thread creates| F[smss.exe · Session Manager]
+  F --> G[csrss.exe + wininit.exe<br/>Session 0]
+  F --> H[csrss.exe + winlogon.exe<br/>Session 1]
+  G --> I[services.exe · SCM]
+  G --> J[lsass.exe · LSA]
+  H --> K[logonui.exe]
+  K --> L[Credential Providers]
+  L -->|successful logon| M[userinit.exe]
+  M --> N[explorer.exe]
+        </div>
+      </div>
+    </section>
+
+    <!-- smss.exe deep dive -->
+    <section id="smss" class="mb-16">
+      <h2 class="doc-h2 mb-5">smss.exe — Session Manager Subsystem</h2>
+      <div class="glass-strong p-6 reveal">
+        <p class="prose-muted text-sm mb-4">The very first user-mode process. There is no parent process shown for it in Task Manager because it's created directly by a kernel-mode system thread, not by another user-mode process.</p>
+        <div class="grid md:grid-cols-2 gap-x-8 gap-y-4 text-sm">
+          <div><div class="text-xs font-bold text-slate-500 mb-1">RESPONSIBILITIES</div><p class="prose-muted">Creates environment variables, opens paging files, creates the initial three sessions, runs <code>BootExecute</code> native applications (e.g. <code>autochk</code>), processes pending file rename/delete operations, then spawns <code>csrss.exe</code> + <code>wininit.exe</code>/<code>winlogon.exe</code> per session and exits its per-session copy (the master instance keeps running to service new session requests).</p></div>
+          <div><div class="text-xs font-bold text-slate-500 mb-1">REGISTRY INTERACTION</div><p class="prose-muted"><code>HKLM\SYSTEM\CurrentControlSet\Control\Session Manager</code> — <code>BootExecute</code>, <code>PendingFileRenameOperations</code>, <code>SubSystems\Windows</code>, <code>Memory Management\*</code>, <code>Environment</code>.</p></div>
+          <div><div class="text-xs font-bold text-slate-500 mb-1">DLL DEPENDENCIES</div><p class="prose-muted">Deliberately minimal — mostly <code>ntdll.dll</code> only (native API, no Win32 subsystem yet exists when it starts).</p></div>
+          <div><div class="text-xs font-bold text-slate-500 mb-1">MEMORY / KERNEL INIT</div><p class="prose-muted">Runs before any Win32 subsystem exists, so it can only call the Native API (<code>Nt*</code>/<code>Zw*</code> functions) directly — no <code>kernel32.dll</code>. It creates the paging file(s) sized per <code>Memory Management</code> registry values.</p></div>
+        </div>
+        <div class="callout callout-red mt-5">
+          <div class="co-icon"><i data-lucide="skull" class="w-4 h-4"></i></div>
+          <div><div class="callout-title">RED TEAM NOTE</div><div class="callout-body">A malicious <code>BootExecute</code> entry runs before Defender's real-time protection is fully online — a rare pre-AV persistence window. Extremely high-value, extremely rare in practice because it requires SYSTEM + a reboot.</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Executables deep dive -->
+    <section id="executables" class="mb-16">
+      <h2 class="doc-h2 mb-2">The Logon Process Cast</h2>
+      <p class="prose-muted text-sm mb-6 max-w-3xl">Eleven processes, one job each. For every one: purpose, launcher, DLLs, registry, privileges, and how it gets abused.</p>
+
+      <div class="space-y-5">
+
+        <!-- winlogon -->
+        <article class="glass p-5 reveal" id="exe-winlogon">
+          <div class="flex items-center gap-2 mb-3"><span class="badge badge-blue">SYSTEM</span><h3 class="font-mono text-base font-bold text-white">winlogon.exe</h3></div>
+          <div class="grid md:grid-cols-2 gap-x-8 gap-y-2 text-[13px] prose-muted">
+            <p><b class="text-slate-300">Purpose:</b> Owns the secure desktop, listens for the Secure Attention Sequence (Ctrl+Alt+Del), drives the logon/lock/unlock state machine, launches the shell via <code>userinit.exe</code>.</p>
+            <p><b class="text-slate-300">Launched by:</b> <code>smss.exe</code>, one instance per interactive session.</p>
+            <p><b class="text-slate-300">DLLs loaded:</b> <code>winsta.dll</code>, <code>sas.dll</code>, <code>wlnotify.dll</code> (legacy notify packages), <code>userenv.dll</code>.</p>
+            <p><b class="text-slate-300">Registry:</b> <code>HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon</code> — <code>Shell</code>, <code>Userinit</code>, <code>GinaDLL</code> (legacy), <code>AutoAdminLogon</code>.</p>
+            <p><b class="text-slate-300">Privileges:</b> SYSTEM, exclusive access to the Winlogon secure desktop.</p>
+            <p><b class="text-slate-300">Abuse:</b> Append a second binary to <code>Shell</code> or <code>Userinit</code> for boot persistence; register a rogue Credential Provider CLSID.</p>
+          </div>
+          <div class="callout callout-blue mt-3"><div class="co-icon"><i data-lucide="search" class="w-4 h-4"></i></div><div><div class="callout-title">DETECTION</div><div class="callout-body">Baseline <code>Shell=explorer.exe</code> and <code>Userinit=C:\Windows\system32\userinit.exe,</code> exactly; alert on any extra comma-separated value or path outside System32.</div></div></div>
+        </article>
+
+        <!-- logonui -->
+        <article class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-3"><span class="badge badge-blue">SYSTEM</span><h3 class="font-mono text-base font-bold text-white">logonui.exe</h3></div>
+          <div class="grid md:grid-cols-2 gap-x-8 gap-y-2 text-[13px] prose-muted">
+            <p><b class="text-slate-300">Purpose:</b> Renders the actual logon screen and hosts Credential Provider tiles on the secure desktop.</p>
+            <p><b class="text-slate-300">Launched by:</b> <code>winlogon.exe</code>, fresh process every time the SAS fires.</p>
+            <p><b class="text-slate-300">DLLs loaded:</b> <code>authui.dll</code>, <code>credui.dll</code>, plus every registered <span class="term" data-term="Credential Provider">Credential Provider</span> COM DLL (e.g. <code>cryptngc.dll</code> for Hello).</p>
+            <p><b class="text-slate-300">Registry:</b> <code>HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{GUID}</code>.</p>
+            <p><b class="text-slate-300">Privileges:</b> SYSTEM, isolated on the secure desktop — no other desktop's windows can draw over it.</p>
+            <p><b class="text-slate-300">Abuse:</b> Not logonui.exe itself, but adjacent accessibility-tool hijacks — replacing <code>sethc.exe</code>/<code>utilman.exe</code> or setting an <span class="term" data-term="IFEO">IFEO</span> Debugger on them to spawn <code>cmd.exe</code> as SYSTEM before any credentials are entered.</p>
+          </div>
+          <div class="callout callout-red mt-3"><div class="co-icon"><i data-lucide="skull" class="w-4 h-4"></i></div><div><div class="callout-title">RED TEAM NOTE</div><div class="callout-body">"Sticky Keys" backdoor: replace <code>C:\Windows\System32\sethc.exe</code> with <code>cmd.exe</code> (needs offline/admin access), then pressing Shift 5x at the lock screen pops a SYSTEM shell.</div></div></div>
+        </article>
+
+        <!-- lsass -->
+        <article class="glass p-5 reveal" id="exe-lsass">
+          <div class="flex items-center gap-2 mb-3"><span class="badge badge-blue">SYSTEM · PPL</span><h3 class="font-mono text-base font-bold text-white">lsass.exe</h3></div>
+          <div class="grid md:grid-cols-2 gap-x-8 gap-y-2 text-[13px] prose-muted">
+            <p><b class="text-slate-300">Purpose:</b> Enforces the local security policy — authentication, token creation, holds credential secrets in memory. See <a href="authentication.html#lsass" class="text-cyan-300 underline">Part 2</a> for the full authentication engine.</p>
+            <p><b class="text-slate-300">Launched by:</b> <code>wininit.exe</code>, in Session 0.</p>
+            <p><b class="text-slate-300">DLLs loaded:</b> <code>lsasrv.dll</code>, <code>msv1_0.dll</code>, <code>kerberos.dll</code>, <code>negotiate.dll</code>, <code>schannel.dll</code>, <code>samsrv.dll</code>.</p>
+            <p><b class="text-slate-300">Registry:</b> <code>HKLM\SYSTEM\CurrentControlSet\Control\Lsa</code> — <code>Authentication Packages</code>, <code>Security Packages</code>, <code>RunAsPPL</code>.</p>
+            <p><b class="text-slate-300">Privileges:</b> SYSTEM; can run as a Protected Process Light (PPL) since <code>RunAsPPL=1</code>, or isolated entirely via <span class="term" data-term="Credential Guard">Credential Guard</span>.</p>
+            <p><b class="text-slate-300">Abuse:</b> The single most targeted process on Windows for credential dumping (Mimikatz <code>sekurlsa::logonpasswords</code>).</p>
+          </div>
+          <div class="callout callout-danger mt-3"><div class="co-icon"><i data-lucide="alert-triangle" class="w-4 h-4"></i></div><div><div class="callout-title">DETECTION</div><div class="callout-body">Sysmon Event ID 10 (ProcessAccess) with <code>TargetImage=lsass.exe</code> and <code>GrantedAccess</code> of <code>0x1010</code>/<code>0x1410</code>/<code>0x1fffff</code> from a non-allow-listed source process; Defender ASR rule "Block credential stealing from the Windows local security authority subsystem".</div></div></div>
+        </article>
+
+        <!-- services.exe -->
+        <article class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-3"><span class="badge badge-blue">SYSTEM</span><h3 class="font-mono text-base font-bold text-white">services.exe</h3></div>
+          <div class="grid md:grid-cols-2 gap-x-8 gap-y-2 text-[13px] prose-muted">
+            <p><b class="text-slate-300">Purpose:</b> Service Control Manager (SCM) — starts, stops, and supervises every Windows service per its configured start type.</p>
+            <p><b class="text-slate-300">Launched by:</b> <code>wininit.exe</code>, Session 0.</p>
+            <p><b class="text-slate-300">DLLs loaded:</b> <code>sechost.dll</code>, <code>advapi32.dll</code>, <code>rpcrt4.dll</code>.</p>
+            <p><b class="text-slate-300">Registry:</b> <code>HKLM\SYSTEM\CurrentControlSet\Services\*</code> — <code>ImagePath</code>, <code>Start</code>, <code>Type</code>, <code>ObjectName</code>.</p>
+            <p><b class="text-slate-300">Privileges:</b> SYSTEM.</p>
+            <p><b class="text-slate-300">Abuse:</b> Create a new service (or overwrite <code>ImagePath</code> on an existing one) pointing to a malicious binary for persistence and lateral movement (PsExec-style).</p>
+          </div>
+          <div class="callout callout-blue mt-3"><div class="co-icon"><i data-lucide="search" class="w-4 h-4"></i></div><div><div class="callout-title">DETECTION</div><div class="callout-body">Event ID <b>7045</b> (new service installed) and <b>4697</b> (service installed, Security log); alert on services.exe spawning <code>cmd.exe</code>/<code>powershell.exe</code> directly.</div></div></div>
+        </article>
+
+        <!-- smss.exe short card -->
+        <article class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-3"><span class="badge badge-blue">SYSTEM</span><h3 class="font-mono text-base font-bold text-white">smss.exe</h3></div>
+          <p class="prose-muted text-sm">Covered in full above — see <a href="#smss" class="text-cyan-300 underline">Session Manager Subsystem</a>.</p>
+        </article>
+
+        <!-- csrss -->
+        <article class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-3"><span class="badge badge-blue">SYSTEM · PROTECTED</span><h3 class="font-mono text-base font-bold text-white">csrss.exe</h3></div>
+          <div class="grid md:grid-cols-2 gap-x-8 gap-y-2 text-[13px] prose-muted">
+            <p><b class="text-slate-300">Purpose:</b> User-mode half of the Win32 subsystem — console window hosting, process/thread creation &amp; termination notifications, shutdown coordination.</p>
+            <p><b class="text-slate-300">Launched by:</b> <code>smss.exe</code>, one per session.</p>
+            <p><b class="text-slate-300">DLLs loaded:</b> <code>csrsrv.dll</code>, <code>basesrv.dll</code>, <code>winsrv.dll</code>.</p>
+            <p><b class="text-slate-300">Registry:</b> <code>HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\SubSystems!Windows</code>.</p>
+            <p><b class="text-slate-300">Privileges:</b> SYSTEM, marked a <b>critical process</b> — the kernel bugchecks the machine if it's killed.</p>
+            <p><b class="text-slate-300">Abuse:</b> Rarely a direct target today; an <i>extra</i> csrss.exe not spawned by smss.exe is a strong process-masquerading indicator.</p>
+          </div>
+        </article>
+
+        <!-- explorer -->
+        <article class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-3"><span class="badge badge-amber">USER</span><h3 class="font-mono text-base font-bold text-white">explorer.exe</h3></div>
+          <div class="grid md:grid-cols-2 gap-x-8 gap-y-2 text-[13px] prose-muted">
+            <p><b class="text-slate-300">Purpose:</b> The Windows shell itself — desktop, taskbar, Start menu, File Explorer windows.</p>
+            <p><b class="text-slate-300">Launched by:</b> <code>userinit.exe</code>, per the <code>Shell</code> value; userinit then exits.</p>
+            <p><b class="text-slate-300">DLLs loaded:</b> <code>shell32.dll</code>, <code>shcore.dll</code>, <code>explorerframe.dll</code>, <code>windows.storage.dll</code>.</p>
+            <p><b class="text-slate-300">Registry:</b> <code>HKCU\...\Explorer</code> shell folders and CLSID extension points; <code>Winlogon!Shell</code>.</p>
+            <p><b class="text-slate-300">Privileges:</b> The logged-on user's token (Medium integrity, or a filtered admin token under UAC).</p>
+            <p><b class="text-slate-300">Abuse:</b> Malicious shell extensions / context-menu handlers; classic process-name masquerading (fake <code>explorer.exe</code> launched from a temp folder).</p>
+          </div>
+          <div class="callout callout-blue mt-3"><div class="co-icon"><i data-lucide="search" class="w-4 h-4"></i></div><div><div class="callout-title">DETECTION</div><div class="callout-body">Verify image path is exactly <code>C:\Windows\explorer.exe</code> and parent process is <code>userinit.exe</code>; anything else is suspicious.</div></div></div>
+        </article>
+
+        <!-- userinit -->
+        <article class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-3"><span class="badge badge-amber">USER</span><h3 class="font-mono text-base font-bold text-white">userinit.exe</h3></div>
+          <div class="grid md:grid-cols-2 gap-x-8 gap-y-2 text-[13px] prose-muted">
+            <p><b class="text-slate-300">Purpose:</b> Applies profile/logon-script environment setup, then launches the Shell and terminates.</p>
+            <p><b class="text-slate-300">Launched by:</b> <code>winlogon.exe</code>, per the <code>Userinit</code> value, after a successful logon.</p>
+            <p><b class="text-slate-300">DLLs loaded:</b> <code>userenv.dll</code>.</p>
+            <p><b class="text-slate-300">Registry:</b> <code>HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon!Userinit</code>.</p>
+            <p><b class="text-slate-300">Privileges:</b> The freshly created user token; short-lived.</p>
+            <p><b class="text-slate-300">Abuse:</b> Append <code>,C:\malware.exe</code> to the <code>Userinit</code> value — runs at every single logon, before the shell even appears.</p>
+          </div>
+        </article>
+
+        <!-- dwm -->
+        <article class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-3"><span class="badge badge-amber">USER</span><h3 class="font-mono text-base font-bold text-white">dwm.exe</h3></div>
+          <div class="grid md:grid-cols-2 gap-x-8 gap-y-2 text-[13px] prose-muted">
+            <p><b class="text-slate-300">Purpose:</b> Desktop Window Manager — GPU-accelerated window composition, transparency, and visual effects, one instance per session.</p>
+            <p><b class="text-slate-300">Launched by:</b> Session infrastructure at session creation (via winlogon/session manager).</p>
+            <p><b class="text-slate-300">DLLs loaded:</b> <code>dwmcore.dll</code>, <code>uDWM.dll</code>, <code>d3d11.dll</code>.</p>
+            <p><b class="text-slate-300">Registry:</b> <code>HKCU\Software\Microsoft\Windows\DWM</code>.</p>
+            <p><b class="text-slate-300">Privileges:</b> Runs as the logged-on user since Windows 8 (previously a dedicated service account).</p>
+            <p><b class="text-slate-300">Abuse:</b> Rarely targeted directly; occasionally seen as a masquerading process name.</p>
+          </div>
+        </article>
+
+        <!-- taskhostw -->
+        <article class="glass p-5 reveal">
+          <div class="flex items-center gap-2 mb-3"><span class="badge badge-amber">VARIES</span><h3 class="font-mono text-base font-bold text-white">taskhostw.exe</h3></div>
+          <div class="grid md:grid-cols-2 gap-x-8 gap-y-2 text-[13px] prose-muted">
+            <p><b class="text-slate-300">Purpose:</b> Generic host for DLL/COM-based Scheduled Tasks that don't warrant their own executable.</p>
+            <p><b class="text-slate-300">Launched by:</b> Task Scheduler service, at logon or on a task trigger.</p>
+            <p><b class="text-slate-300">DLLs loaded:</b> Whatever the hosted task specifies, plus <code>taskschd.dll</code>.</p>
+            <p><b class="text-slate-300">Registry:</b> <code>HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache</code>; task XML in <code>C:\Windows\System32\Tasks</code>.</p>
+            <p><b class="text-slate-300">Privileges:</b> Whatever the task's configured principal is — often SYSTEM.</p>
+            <p><b class="text-slate-300">Abuse:</b> A very common persistence host — register a task whose action loads an attacker DLL/COM handler.</p>
+          </div>
+          <div class="callout callout-blue mt-3"><div class="co-icon"><i data-lucide="search" class="w-4 h-4"></i></div><div><div class="callout-title">DETECTION</div><div class="callout-body">Event ID <b>4698</b> (scheduled task created); review Task Cache registry and Tasks folder XML for unfamiliar actions.</div></div></div>
+        </article>
+
+        <!-- svchost -->
+        <article class="glass p-5 reveal" id="exe-svchost">
+          <div class="flex items-center gap-2 mb-3"><span class="badge badge-blue">VARIES</span><h3 class="font-mono text-base font-bold text-white">svchost.exe</h3></div>
+          <div class="grid md:grid-cols-2 gap-x-8 gap-y-2 text-[13px] prose-muted">
+            <p><b class="text-slate-300">Purpose:</b> Generic host process for services implemented as DLLs, grouped by the <code>-k</code> switch to share or isolate processes.</p>
+            <p><b class="text-slate-300">Launched by:</b> <code>services.exe</code> (SCM).</p>
+            <p><b class="text-slate-300">DLLs loaded:</b> Each service's <code>ServiceDll</code> value.</p>
+            <p><b class="text-slate-300">Registry:</b> <code>HKLM\SYSTEM\CurrentControlSet\Services\&lt;svc&gt;\Parameters!ServiceDll</code>; <code>HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost</code> (group definitions).</p>
+            <p><b class="text-slate-300">Privileges:</b> LocalSystem, LocalService, or NetworkService depending on the service.</p>
+            <p><b class="text-slate-300">Abuse:</b> The most typo-squatted / masqueraded process name in the wild; also abused by registering a malicious <code>ServiceDll</code> under a legitimate-sounding service.</p>
+          </div>
+          <div class="callout callout-danger mt-3"><div class="co-icon"><i data-lucide="alert-triangle" class="w-4 h-4"></i></div><div><div class="callout-title">DETECTION</div><div class="callout-body">Validate path is exactly <code>C:\Windows\System32\svchost.exe</code>, parent is <code>services.exe</code>, and the <code>-k</code> group argument matches a known-good group; flag any svchost.exe with no <code>-k</code> argument.</div></div></div>
+        </article>
+
+      </div>
+    </section>
+
+    <div class="callout callout-fun reveal">
+      <div class="co-icon"><i data-lucide="sparkles" class="w-4 h-4"></i></div>
+      <div><div class="callout-title">DID YOU KNOW?</div><div class="callout-body">Session 0 stopped hosting interactive user desktops starting with Vista specifically to prevent "shatter attacks," where a low-privilege process sends window messages to a higher-privilege one sharing the same desktop.</div></div>
+    </div>
+
+  </main>
+
+  <!-- RIGHT: on this page -->
+  <aside class="hidden xl:block w-56 flex-none sticky top-24 h-[calc(100vh-7rem)] overflow-y-auto">
+    <div class="text-[11px] font-bold text-slate-500 tracking-wide mb-3">ON THIS PAGE</div>
+    <nav class="space-y-0.5">
+      <a href="#evolution" class="toc-link">Evolution</a>
+      <a href="#firmware-trust" class="toc-link">Firmware Trust Chain</a>
+      <a href="#boot-manager" class="toc-link">Boot Manager → Kernel</a>
+      <a href="#smss" class="toc-link">smss.exe</a>
+      <a href="#executables" class="toc-link">Process Cast</a>
+    </nav>
+    <div class="mt-8 glass p-4">
+      <div class="text-xs font-bold text-slate-300 mb-2 flex items-center gap-1.5"><i data-lucide="arrow-right-circle" class="w-3.5 h-3.5 text-blue-400"></i> Next up</div>
+      <a href="authentication.html" class="text-sm text-cyan-300 hover:underline">Windows Authentication Engine →</a>
+    </div>
+  </aside>
+</div>
+
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+<script src="../assets/js/glossary.js"></script>
+<script src="../assets/js/main.js"></script>
+</body>
+</html>
